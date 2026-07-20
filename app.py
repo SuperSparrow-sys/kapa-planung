@@ -377,6 +377,34 @@ def update_project(project_id):
         return jsonify({"error": "no fields"}), 400
 
     db = get_db()
+
+    # Wenn sich Start oder Dauer ändert, lösche Einträge für entfallende Quartale
+    if "start_year" in fields or "start_q" in fields or "duration" in fields:
+        project = db.execute(
+            "SELECT start_year, start_q, duration FROM projects WHERE id = ?",
+            (project_id,)
+        ).fetchone()
+        if project:
+            new_start_year = fields.get("start_year", project["start_year"])
+            new_start_q = fields.get("start_q", project["start_q"])
+            new_duration = fields.get("duration", project["duration"])
+            new_start_ord = q_ord(new_start_year, new_start_q)
+            new_end_ord = new_start_ord + new_duration - 1
+
+            db.execute("""
+                DELETE FROM allocations
+                WHERE project_id = ?
+                  AND (year * 4 + (quarter - 1) < ? OR year * 4 + (quarter - 1) > ?)
+            """, (project_id, new_start_ord, new_end_ord))
+
+            # Auch Teilschritte löschen, die außerhalb des neuen Bereichs liegen
+            db.execute("""
+                DELETE FROM project_steps
+                WHERE project_id = ?
+                  AND (start_year * 4 + (start_q - 1) + duration - 1 < ?
+                       OR start_year * 4 + (start_q - 1) > ?)
+            """, (project_id, new_start_ord, new_end_ord))
+
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     db.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", (*fields.values(), project_id))
     db.commit()
