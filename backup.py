@@ -24,6 +24,9 @@ _BASIS = os.path.dirname(os.path.abspath(__file__))
 _ENV_PFAD = os.path.join(_BASIS, "backup.env")
 _STATS_PFAD = os.path.join(_BASIS, "backup_stats.json")
 
+_SSH_BIN = shutil.which("ssh") or "/usr/bin/ssh"
+_SCP_BIN = shutil.which("scp") or "/usr/bin/scp"
+
 
 def _env_lesen() -> dict:
     result = {}
@@ -140,7 +143,7 @@ def _ssh_key_option(cfg: BackupConfig) -> list[str]:
 
 
 def _ssh_cmd(cfg: BackupConfig, *args) -> subprocess.CompletedProcess:
-    cmd = ["ssh"]
+    cmd = [_SSH_BIN]
     cmd.extend(_ssh_key_option(cfg))
     cmd.extend([
         "-o", "StrictHostKeyChecking=no",
@@ -153,7 +156,7 @@ def _ssh_cmd(cfg: BackupConfig, *args) -> subprocess.CompletedProcess:
 
 
 def _scp_transfer(cfg: BackupConfig, local: Path, remote: str) -> bool:
-    cmd = ["scp", "-O"]
+    cmd = [_SCP_BIN, "-O"]
     cmd.extend(_ssh_key_option(cfg))
     cmd.extend([
         "-o", "StrictHostKeyChecking=no",
