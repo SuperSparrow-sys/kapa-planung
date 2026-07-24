@@ -340,10 +340,11 @@ html, body {
 }
 
 .gantt {
+  --q-w: 110px;
   display: grid;
-  grid-template-columns: 220px repeat(var(--col-count), 96px);
+  grid-template-columns: 220px repeat(var(--col-count), var(--q-w));
   row-gap: 4px;
-  padding-bottom: 8px;
+  padding-bottom: 0;
   min-width: max-content;
 }
 
@@ -415,7 +416,7 @@ html, body {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: repeat(var(--col-count), 96px);
+  grid-template-columns: repeat(var(--col-count), var(--q-w));
   pointer-events: none;
 }
 .track-cell {
@@ -431,6 +432,8 @@ html, body {
   position: absolute;
   top: 6px;
   bottom: 6px;
+  left: calc(var(--left-idx, 0) * var(--q-w));
+  width: calc(var(--span, 1) * var(--q-w));
   overflow: hidden;
 }
 .project-bar {
@@ -459,7 +462,7 @@ html, body {
 
 /* Klickbare Quartals-Segmente innerhalb des durchgehenden Balkens.
    Dünne Trennstriche markieren die Quartalsgrenzen; ein Klick auf ein
-   Segment öffnet die Manntage-Eingabe für genau dieses Quartal. */
+   Segment öffnet die Stunden-Eingabe für genau dieses Quartal. */
 .bar-segments {
   position: absolute;
   inset: 0;
@@ -498,69 +501,58 @@ html, body {
 }
 .step-row .track-cell.is-current { background: var(--today-tint); opacity: .7; }
 
-/* ---------- Auslastung: eigener Bereich ganz unten, in Prozent ---------- */
-.utilization {
-  flex-shrink: 0;
-  margin-top: 14px;
-  background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: 0 1px 2px 0 rgba(60,64,67,.15);
-  padding: 14px 16px 16px;
-  max-height: 34vh;
-  display: flex;
-  flex-direction: column;
+/* ---------- Auslastung: sticky-Zeile am unteren Rand des Gantt-Grids ---------- */
+.util-row {
+  /* .gantt-row hat display: contents – Styles wirken auf die Kinder unten */
 }
-.utilization-title {
+
+.util-title-cell {
+  position: sticky;
+  left: 0;
+  bottom: 0;
+  z-index: 4;
+  background: var(--surface);
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 96px;
+  padding: 14px 14px;
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  margin-bottom: 10px;
-  flex-shrink: 0;
+  border-top: 1px solid var(--border-light);
+  box-shadow: 0 -2px 4px rgba(60,64,67,.05);
 }
-.utilization-title .icon-sm { color: var(--text-secondary); }
-
-.util-scroll { overflow: auto; }
-
-.util-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--col-count), 108px);
-  column-gap: 8px;
-  align-items: start;
-}
+.util-title-cell .icon-sm { color: var(--text-secondary); flex-shrink: 0; }
 
 .util-col {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 8px 10px;
-  border-radius: 10px;
-  background: var(--bg);
+  justify-content: center;
+  gap: 8px;
+  min-height: 96px;
+  padding: 12px 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-light);
+  box-shadow: 0 -2px 4px rgba(60,64,67,.05);
 }
 .util-col.is-current {
   background: var(--today-tint);
 }
-.util-col-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-align: center;
-  margin-bottom: 2px;
-}
-.util-col.is-current .util-col-label { color: var(--today-border); font-weight: 700; }
 
 .util-bar-wrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .util-bar-name {
   font-size: 10px;
   color: var(--text-secondary);
-  width: 30px;
+  width: 24px;
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -568,7 +560,7 @@ html, body {
 }
 .util-bar-track {
   flex: 1;
-  height: 7px;
+  height: 8px;
   border-radius: 4px;
   background: var(--border-light);
   overflow: hidden;
@@ -581,7 +573,7 @@ html, body {
 .util-bar-pct {
   font-size: 10px;
   color: var(--text-secondary);
-  width: 30px;
+  width: 28px;
   text-align: right;
   flex-shrink: 0;
 }
@@ -716,7 +708,7 @@ html, body {
   border-color: var(--blue);
 }
 
-/* Einstellungen-Modal (Mitarbeiter + max. Tage/Quartal) */
+/* Einstellungen-Modal (Mitarbeiter + max. Stunden/Quartal) */
 .settings-member-list {
   display: flex;
   flex-direction: column;
@@ -732,13 +724,13 @@ html, body {
   border-bottom: 1px solid var(--border-light);
 }
 .settings-member-name { flex: 1; min-width: 0; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings-member-maxtage {
+.settings-member-maxstunden {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
-.settings-max-tage-input {
+.settings-max-stunden-input {
   width: 86px;
   padding: 5px 8px;
   border: 1px solid var(--border);
@@ -746,7 +738,7 @@ html, body {
   font-size: 12px;
   text-align: right;
 }
-.settings-max-tage-input:focus { outline: 2px solid var(--blue); outline-offset: -1px; border-color: var(--blue); }
+.settings-max-stunden-input:focus { outline: 2px solid var(--blue); outline-offset: -1px; border-color: var(--blue); }
 .settings-unit { font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
 
 .settings-add-member {
@@ -773,6 +765,42 @@ html, body {
   outline: 2px solid var(--blue);
   outline-offset: -1px;
   border-color: var(--blue);
+}
+
+/* ---------- Toast ---------- */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: #323232;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+  pointer-events: auto;
+  animation: toast-in .3s ease, toast-out .3s ease 2.7s forwards;
+  max-width: 360px;
+}
+.toast.toast-error { background: #c62828; }
+.toast.toast-success { background: #2e7d32; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(20px); }
 }
 
 @media (max-width: 720px) {

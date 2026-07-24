@@ -1,2 +1,3 @@
 Flask>=3.0
 holidays>=0.50
+pytest>=8.0

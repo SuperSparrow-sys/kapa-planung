@@ -1,0 +1,19 @@
+<div class="gantt-row util-row">
+  <div class="gantt-label-cell util-title-cell">
+    <svg class="icon-sm"><use href="#icon-person"/></svg>
+    Auslastung je Quartal
+  </div>
+  {% for u in utilization %}
+  <div class="util-col {{ 'is-current' if u.is_current }}">
+    {% for m in u.members %}
+    <div class="util-bar-wrap" title="{{ m.name }}: {{ m.total }} / {{ m.capacity|round(1) }} Stunden ({{ m.pct }}%)">
+      <div class="util-bar-name">{{ m.name.split(' ')[0] }}</div>
+      <div class="util-bar-track">
+        <div class="util-bar-fill {{ 'over' if m.pct > 100 }}" style="width: {{ [m.pct, 100]|min }}%; background:{{ m.color }};"></div>
+      </div>
+      <div class="util-bar-pct">{{ m.pct }}%</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>

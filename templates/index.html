@@ -10,7 +10,7 @@
 </head>
 <body>
 
-<!-- Icon-Sprites (Piktogramme, keine Emojis) -->
+<!-- Icon-Sprites -->
 <svg style="display:none">
   <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>
@@ -42,105 +42,13 @@
   </symbol>
 </svg>
 
+<!-- Toast-Container -->
+<div id="toast-container" class="toast-container"></div>
+
 <div class="app">
 
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="brand">
-      <svg class="brand-icon"><use href="#icon-calendar"/></svg>
-      <span>Kapa-Planung</span>
-    </div>
+  {% include '_sidebar.html' %}
 
-    <button id="btn-new-project" class="btn-create">
-      <svg class="icon-sm"><use href="#icon-plus"/></svg>
-      Projekt hinzufügen
-    </button>
-
-    <form id="form-new-project" class="new-project-form hidden">
-      <label>Projektname
-        <input type="text" id="np-name" required placeholder="z.B. Angebotserstellung Step 2">
-      </label>
-      <label>Start-Quartal
-        <select id="np-start">
-          {% for opt in quarter_options %}
-          <option value="{{ opt.year }}-{{ opt.q }}">{{ opt.label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Dauer (Quartale)
-        <input type="number" id="np-duration" min="1" value="1" required>
-      </label>
-      <div class="form-actions">
-        <button type="button" id="np-cancel" class="btn-text">Abbrechen</button>
-        <button type="submit" class="btn-primary">Speichern</button>
-      </div>
-    </form>
-
-    <div class="project-list">
-      <div class="project-list-title">Projekte</div>
-      {% for row in project_rows %}
-      <div class="project-block">
-        <div class="project-list-item" data-project-id="{{ row.project.id }}">
-          <button class="expand-toggle {{ 'is-open' if row.steps }}" title="Teilschritte anzeigen">
-            <svg class="icon-xs"><use href="#icon-chevron"/></svg>
-          </button>
-          <span class="dot" style="background:{{ row.project.color }}"></span>
-          <div class="project-list-text">
-            <div class="project-list-name">{{ row.project.name }}</div>
-            <div class="project-list-meta">
-              {% if row.cells %}{{ row.cells[0].label }}{% if row.cells|length > 1 %} – {{ row.cells[-1].label }}{% endif %}{% endif %}
-              {% if row.allocated_total %} · {{ row.allocated_total }} Tage geplant{% endif %}
-            </div>
-          </div>
-          <button class="icon-btn btn-edit-project"
-                  data-project-id="{{ row.project.id }}"
-                  data-name="{{ row.project.name }}"
-                  data-start-year="{{ row.project.start_year }}"
-                  data-start-q="{{ row.project.start_q }}"
-                  data-duration="{{ row.project.duration }}"
-                  title="Projekt bearbeiten">
-            <svg class="icon-sm"><use href="#icon-pencil"/></svg>
-          </button>
-          <button class="icon-btn btn-delete-project" title="Projekt löschen">
-            <svg class="icon-sm"><use href="#icon-trash"/></svg>
-          </button>
-        </div>
-
-        <div class="steps-list {{ 'is-open' if row.steps }}">
-          {% for srow in row.steps %}
-          <div class="step-item" data-step-id="{{ srow.step.id }}">
-            <span class="step-dot" style="border-color:{{ row.project.color }}"></span>
-            <div class="step-text">
-              <div class="step-name">{{ srow.step.name }}</div>
-            </div>
-            <button class="icon-btn btn-edit-step"
-                    data-step-id="{{ srow.step.id }}"
-                    data-project-id="{{ row.project.id }}"
-                    data-name="{{ srow.step.name }}"
-                    data-start-year="{{ srow.step.start_year }}"
-                    data-start-q="{{ srow.step.start_q }}"
-                    data-duration="{{ srow.step.duration }}"
-                    title="Teilschritt bearbeiten">
-              <svg class="icon-xs"><use href="#icon-pencil"/></svg>
-            </button>
-            <button class="icon-btn btn-delete-step" data-step-id="{{ srow.step.id }}" title="Teilschritt löschen">
-              <svg class="icon-xs"><use href="#icon-trash"/></svg>
-            </button>
-          </div>
-          {% endfor %}
-          <button class="btn-add-step" data-project-id="{{ row.project.id }}">
-            <svg class="icon-xs"><use href="#icon-plus"/></svg>
-            Teilschritt
-          </button>
-        </div>
-      </div>
-      {% else %}
-      <div class="empty-hint">Noch keine Projekte angelegt.</div>
-      {% endfor %}
-    </div>
-  </aside>
-
-  <!-- Hauptbereich -->
   <main class="main">
     <div class="topbar">
       <h1>Kapazitätsplanung</h1>
@@ -155,101 +63,11 @@
       </div>
     </div>
 
-    <div class="gantt-scroll" id="gantt-scroll">
-      <div class="gantt" style="--col-count: {{ col_count }};">
-
-        <!-- Kopfzeile -->
-        <div class="gantt-row gantt-head">
-          <div class="gantt-label-cell head-cell">Projekt</div>
-          {% for qtr in quarters %}
-          <div class="gantt-cell head-cell {{ 'is-current' if qtr.is_current }}" data-qcol="{{ qtr.ord }}">
-            {{ qtr.label }}
-          </div>
-          {% endfor %}
-        </div>
-
-        {% for row in project_rows %}
-        <div class="gantt-row project-row">
-          <div class="gantt-label-cell">
-            <span class="dot" style="background:{{ row.project.color }}"></span>
-            {{ row.project.name }}
-          </div>
-          <div class="track-wrap" style="grid-column: 2 / span {{ col_count }};">
-            <div class="track-grid" style="--col-count: {{ col_count }};">
-              {% for qtr in quarters %}<div class="track-cell {{ 'is-current' if qtr.is_current }}"></div>{% endfor %}
-            </div>
-            <div class="bar project-bar {{ '' if row.geo.clipped_start else 'bar-round-start' }} {{ '' if row.geo.clipped_end else 'bar-round-end' }}"
-                 style="left:{{ row.geo.left_idx * 96 }}px; width:{{ row.geo.span_count * 96 }}px; background:{{ row.project.color }};">
-              <span class="bar-label">{{ row.project.name }}{% if row.allocated_total %} · {{ row.allocated_total }} Tage{% endif %}</span>
-              <div class="bar-segments">
-                {% for cell in row.cells %}
-                <div class="bar-segment"
-                     data-project-id="{{ row.project.id }}"
-                     data-project-name="{{ row.project.name }}"
-                     data-year="{{ cell.year }}"
-                     data-q="{{ cell.q }}"
-                     data-label="{{ cell.label }}"
-                     data-alloc='{{ cell.allocations|tojson }}'
-                     title="{{ cell.label }}: Manntage eintragen"></div>
-                {% endfor %}
-              </div>
-            </div>
-          </div>
-        </div>
-        {% for srow in row.steps %}
-        <div class="gantt-row step-row">
-          <div class="gantt-label-cell step-label">
-            <span class="step-dot" style="border-color:{{ row.project.color }}"></span>
-            {{ srow.step.name }}
-          </div>
-          <div class="track-wrap track-wrap-step" style="grid-column: 2 / span {{ col_count }};">
-            <div class="track-grid" style="--col-count: {{ col_count }};">
-              {% for qtr in quarters %}<div class="track-cell {{ 'is-current' if qtr.is_current }}"></div>{% endfor %}
-            </div>
-            <div class="bar step-bar {{ '' if srow.geo.clipped_start else 'bar-round-start' }} {{ '' if srow.geo.clipped_end else 'bar-round-end' }}"
-                 style="left:{{ srow.geo.left_idx * 96 }}px; width:{{ srow.geo.span_count * 96 }}px; border-color:{{ row.project.color }}; color:{{ row.project.color }};"
-                 title="{{ srow.step.name }}">
-              <span class="bar-label">{{ srow.step.name }}</span>
-              <div class="bar-segments bar-segments-static">
-                {% for i in range(srow.geo.span_count) %}<div class="bar-segment bar-segment-static"></div>{% endfor %}
-              </div>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-        {% endfor %}
-      </div>
-    </div>
-
-    <!-- Auslastung: eigener Bereich ganz unten auf der Seite, in Prozent -->
-    <div class="utilization">
-      <div class="utilization-title">
-        <svg class="icon-sm"><use href="#icon-person"/></svg>
-        Auslastung je Quartal
-      </div>
-      <div class="util-scroll">
-        <div class="util-grid" style="--col-count: {{ col_count }};">
-          {% for u in utilization %}
-          <div class="util-col {{ 'is-current' if u.is_current }}">
-            <div class="util-col-label">{{ u.label }}</div>
-            {% for m in u.members %}
-            <div class="util-bar-wrap" title="{{ m.name }}: {{ m.total }} / {{ m.capacity|round(1) }} Tage ({{ m.pct }}%)">
-              <div class="util-bar-name">{{ m.name.split(' ')[0] }}</div>
-              <div class="util-bar-track">
-                <div class="util-bar-fill {{ 'over' if m.pct > 100 }}" style="width: {{ [m.pct, 100]|min }}%; background:{{ m.color }};"></div>
-              </div>
-              <div class="util-bar-pct">{{ m.pct }}%</div>
-            </div>
-            {% endfor %}
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
+    {% include '_gantt.html' %}
   </main>
 </div>
 
-<!-- Modal: Manntage eintragen (alle aktiven Quartale eines Projekts) -->
+<!-- Modal: Stunden eintragen -->
 <div id="modal-overlay" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
@@ -261,9 +79,7 @@
         <svg class="icon-sm"><use href="#icon-close"/></svg>
       </button>
     </div>
-    <div class="modal-body" id="modal-body">
-      <!-- wird per JS befüllt -->
-    </div>
+    <div class="modal-body" id="modal-body"></div>
     <div class="modal-footer">
       <button id="modal-cancel" class="btn-text">Abbrechen</button>
       <button id="modal-save" class="btn-primary">Speichern</button>
@@ -307,13 +123,13 @@
   </div>
 </div>
 
-<!-- Modal: Einstellungen (Mitarbeiter + max. Tage/Quartal) -->
+<!-- Modal: Einstellungen -->
 <div id="settings-modal-overlay" class="modal-overlay hidden">
   <div class="modal modal-wide">
     <div class="modal-header">
       <div>
         <div class="modal-title">Einstellungen</div>
-        <div class="modal-subtitle">Mitarbeiter &amp; max. Arbeitstage pro Quartal</div>
+        <div class="modal-subtitle">Mitarbeiter &amp; max. Stunden pro Quartal</div>
       </div>
       <button id="settings-modal-close" class="icon-btn">
         <svg class="icon-sm"><use href="#icon-close"/></svg>
@@ -325,12 +141,12 @@
         <div class="settings-member-item" data-member-id="{{ m.id }}">
           <svg class="icon-sm"><use href="#icon-person"/></svg>
           <span class="settings-member-name">{{ m.name }}</span>
-          <span class="settings-member-maxtage">
-            <input type="number" min="0" step="0.5" class="settings-max-tage-input"
+          <span class="settings-member-maxstunden">
+            <input type="number" min="0" step="0.5" class="settings-max-stunden-input"
                    data-member-id="{{ m.id }}"
-                   value="{{ m.max_tage_quarter if m.max_tage_quarter is not none else '' }}"
+                   value="{{ m.max_stunden_quarter if m.max_stunden_quarter is not none else '' }}"
                    placeholder="auto: {{ member_defaults[m.id]|round(0) }}">
-            <span class="settings-unit">Tage/Q.</span>
+            <span class="settings-unit">h/Q.</span>
           </span>
           <button class="icon-btn btn-delete-member" data-member-id="{{ m.id }}" title="Mitarbeiter entfernen">
             <svg class="icon-sm"><use href="#icon-trash"/></svg>
@@ -340,7 +156,7 @@
       </div>
       <div class="settings-add-member">
         <input type="text" id="settings-new-member-name" placeholder="Name des Mitarbeiters">
-        <input type="number" min="0" step="0.5" id="settings-new-member-maxtage" placeholder="Max. Tage/Q.">
+        <input type="number" min="0" step="0.5" id="settings-new-member-maxstunden" placeholder="Max. h/Q.">
         <button id="settings-add-member-btn" class="btn-primary">Hinzufügen</button>
       </div>
     </div>
@@ -349,6 +165,14 @@
     </div>
   </div>
 </div>
+
+<script id="app-data" type="application/json">
+{
+  "quarter_options": {{ quarter_options|tojson }},
+  "members": {{ members|tojson }},
+  "member_defaults": {{ member_defaults|tojson }}
+}
+</script>
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

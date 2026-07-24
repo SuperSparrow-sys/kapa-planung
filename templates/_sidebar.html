@@ -1,0 +1,94 @@
+<aside class="sidebar">
+    <div class="brand">
+      <svg class="brand-icon"><use href="#icon-calendar"/></svg>
+      <span>Kapa-Planung</span>
+    </div>
+
+    <button id="btn-new-project" class="btn-create">
+      <svg class="icon-sm"><use href="#icon-plus"/></svg>
+      Projekt hinzufügen
+    </button>
+
+    <form id="form-new-project" class="new-project-form hidden">
+      <label>Projektname
+        <input type="text" id="np-name" required placeholder="z.B. Angebotserstellung Step 2">
+      </label>
+      <label>Start-Quartal
+        <select id="np-start">
+          {% for opt in quarter_options %}
+          <option value="{{ opt.year }}-{{ opt.q }}">{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Dauer (Quartale)
+        <input type="number" id="np-duration" min="1" value="1" required>
+      </label>
+      <div class="form-actions">
+        <button type="button" id="np-cancel" class="btn-text">Abbrechen</button>
+        <button type="submit" class="btn-primary">Speichern</button>
+      </div>
+    </form>
+
+    <div class="project-list">
+      <div class="project-list-title">Projekte</div>
+      {% for row in project_rows %}
+      <div class="project-block">
+        <div class="project-list-item" data-project-id="{{ row.project.id }}">
+          <button class="expand-toggle {{ 'is-open' if row.steps }}" title="Teilschritte anzeigen">
+            <svg class="icon-xs"><use href="#icon-chevron"/></svg>
+          </button>
+          <span class="dot" style="background:{{ row.project.color }}"></span>
+          <div class="project-list-text">
+            <div class="project-list-name">{{ row.project.name }}</div>
+            <div class="project-list-meta">
+              {% if row.cells %}{{ row.cells[0].label }}{% if row.cells|length > 1 %} – {{ row.cells[-1].label }}{% endif %}{% endif %}
+              {% if row.allocated_total %} · {{ row.allocated_total }} Stunden geplant{% endif %}
+            </div>
+          </div>
+          <button class="icon-btn btn-edit-project"
+                  data-project-id="{{ row.project.id }}"
+                  data-name="{{ row.project.name }}"
+                  data-start-year="{{ row.project.start_year }}"
+                  data-start-q="{{ row.project.start_q }}"
+                  data-duration="{{ row.project.duration }}"
+                  title="Projekt bearbeiten">
+            <svg class="icon-sm"><use href="#icon-pencil"/></svg>
+          </button>
+          <button class="icon-btn btn-delete-project" title="Projekt löschen">
+            <svg class="icon-sm"><use href="#icon-trash"/></svg>
+          </button>
+        </div>
+
+        <div class="steps-list {{ 'is-open' if row.steps }}">
+          {% for srow in row.steps %}
+          <div class="step-item" data-step-id="{{ srow.step.id }}">
+            <span class="step-dot" style="border-color:{{ row.project.color }}"></span>
+            <div class="step-text">
+              <div class="step-name">{{ srow.step.name }}</div>
+            </div>
+            <button class="icon-btn btn-edit-step"
+                    data-step-id="{{ srow.step.id }}"
+                    data-project-id="{{ row.project.id }}"
+                    data-name="{{ srow.step.name }}"
+                    data-start-year="{{ srow.step.start_year }}"
+                    data-start-q="{{ srow.step.start_q }}"
+                    data-duration="{{ srow.step.duration }}"
+                    title="Teilschritt bearbeiten">
+              <svg class="icon-xs"><use href="#icon-pencil"/></svg>
+            </button>
+            <button class="icon-btn btn-delete-step" data-step-id="{{ srow.step.id }}" title="Teilschritt löschen">
+              <svg class="icon-xs"><use href="#icon-trash"/></svg>
+            </button>
+          </div>
+          {% endfor %}
+          <button class="btn-add-step" data-project-id="{{ row.project.id }}">
+            <svg class="icon-xs"><use href="#icon-plus"/></svg>
+            Teilschritt
+          </button>
+        </div>
+      </div>
+      {% else %}
+      <div class="empty-hint">Noch keine Projekte angelegt.</div>
+      {% endfor %}
+    </div>
+  </aside>

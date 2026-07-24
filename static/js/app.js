@@ -1,380 +1,483 @@
-document.addEventListener("DOMContentLoaded", () => {
+(() => {
+  const $ = (sel, ctx) => (ctx || document).querySelector(sel);
+  const $$ = (sel, ctx) => [...(ctx || document).querySelectorAll(sel)];
 
-  // ---------------- Neues Projekt ----------------
-  const btnNew = document.getElementById("btn-new-project");
-  const formNew = document.getElementById("form-new-project");
-  const btnCancelNew = document.getElementById("np-cancel");
+  // -----------------------------------------------------------------------
+  // Toast
+  // -----------------------------------------------------------------------
+  const toastContainer = document.getElementById("toast-container");
+  let toastTimer = 0;
 
-  btnNew.addEventListener("click", () => {
-    formNew.classList.toggle("hidden");
-  });
-  btnCancelNew.addEventListener("click", () => {
-    formNew.classList.add("hidden");
-    formNew.reset();
-  });
+  function showToast(message, type = "success") {
+    const el = document.createElement("div");
+    el.className = "toast toast-" + type;
+    el.textContent = message;
+    toastContainer.appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+  }
 
-  formNew.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = document.getElementById("np-name").value.trim();
-    const [year, q] = document.getElementById("np-start").value.split("-").map(Number);
-    const duration = parseInt(document.getElementById("np-duration").value, 10);
-    if (!name || !duration) return;
+  // -----------------------------------------------------------------------
+  // Scroll-Positionen
+  // -----------------------------------------------------------------------
+  function saveScrollPositions() {
+    const gantt = document.getElementById("gantt-scroll");
+    return {
+      ganttLeft: gantt?.scrollLeft || 0,
+      ganttTop: gantt?.scrollTop || 0,
+    };
+  }
 
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, start_year: year, start_q: q, duration }),
-    });
-    if (res.ok) {
-      location.reload();
-    } else {
-      alert("Projekt konnte nicht gespeichert werden.");
+  function restoreScrollPositions(pos) {
+    const gantt = document.getElementById("gantt-scroll");
+    if (gantt) { gantt.scrollLeft = pos.ganttLeft; gantt.scrollTop = pos.ganttTop; }
+  }
+
+  // -----------------------------------------------------------------------
+  // App-daten aus JSON-Script-Tag lesen + aktualisieren
+  // -----------------------------------------------------------------------
+  function getAppData() {
+    const el = document.getElementById("app-data");
+    return el ? JSON.parse(el.textContent) : {};
+  }
+
+  function updateAppData(partial) {
+    const el = document.getElementById("app-data");
+    if (el) {
+      const data = {
+        quarter_options: partial.quarter_options,
+        members: partial.members,
+        member_defaults: partial.member_defaults,
+      };
+      el.textContent = JSON.stringify(data);
     }
-  });
+  }
 
-  // Projekt löschen (Papierkorb in der Liste)
-  document.querySelectorAll(".btn-delete-project").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const item = btn.closest(".project-list-item");
-      const projectId = item.dataset.projectId;
-      if (!confirm("Dieses Projekt inkl. aller Teilschritte und Manntage-Einträge wirklich löschen?")) return;
-      const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
-      if (res.ok) location.reload();
-    });
-  });
+  // -----------------------------------------------------------------------
+  // Seite partiell aktualisieren (kein location.reload)
+  // -----------------------------------------------------------------------
+  async function refreshPage(successMsg) {
+    const positions = saveScrollPositions();
+    try {
+      const res = await fetch("/_partial");
+      if (!res.ok) throw new Error("Partial fetch failed");
+      const partial = await res.json();
 
-  // ---------------- Teilschritte ein-/ausklappen ----------------
-  document.querySelectorAll(".expand-toggle").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const block = btn.closest(".project-block");
-      const list = block.querySelector(".steps-list");
-      btn.classList.toggle("is-open");
-      list.classList.toggle("is-open");
-    });
-  });
+      const sidebar = document.querySelector(".sidebar");
+      const ganttWrap = document.getElementById("gantt-scroll");
 
-  // Teilschritt löschen
-  document.querySelectorAll(".btn-delete-step").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const stepId = btn.dataset.stepId;
-      if (!confirm("Diesen Teilschritt wirklich löschen?")) return;
-      const res = await fetch(`/api/steps/${stepId}`, { method: "DELETE" });
-      if (res.ok) location.reload();
-    });
-  });
+      if (sidebar) sidebar.innerHTML = partial.sidebar;
+      if (ganttWrap) ganttWrap.outerHTML = partial.gantt;
 
-  // "Heute" Button: zum aktuellen Quartal scrollen
-  const btnToday = document.getElementById("btn-today");
-  if (btnToday) {
-    btnToday.addEventListener("click", () => {
-      const current = document.querySelector(".head-cell.is-current");
-      if (current) {
-        current.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      updateAppData(partial);
+      restoreScrollPositions(positions);
+      attachAllEventListeners();
+
+      if (successMsg) showToast(successMsg, "success");
+    } catch (e) {
+      console.error("refreshPage failed", e);
+      showToast("Aktualisierung fehlgeschlagen", "error");
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // API-Helfer
+  // -----------------------------------------------------------------------
+  async function apiFetch(url, options, okMsg) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) {
+        await refreshPage(okMsg);
+        return { ok: true };
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Fehler aufgetreten", "error");
+      return { ok: false, error: data.error };
+    } catch (e) {
+      console.error(e);
+      showToast("Netzwerkfehler", "error");
+      return { ok: false };
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Event-Listener (zentral, nach jedem Refresh neu gebunden)
+  // -----------------------------------------------------------------------
+  let currentContext = null;
+  let editContext = null;
+
+  function attachAllEventListeners() {
+    attachNewProjectForm();
+    attachExpandToggles();
+    attachProjectDeleteButtons();
+    attachStepDeleteButtons();
+    attachBarSegments();
+    attachEditButtons();
+    attachAddStepButtons();
+    attachTodayButton();
+    attachAllocationModal();
+    attachEditModal();
+    attachSettingsModal();
+  }
+
+  // -- Neues Projekt --
+  function attachNewProjectForm() {
+    const btnNew = document.getElementById("btn-new-project");
+    const formNew = document.getElementById("form-new-project");
+    const btnCancel = document.getElementById("np-cancel");
+    if (!btnNew || !formNew) return;
+
+    const toggle = () => formNew.classList.toggle("hidden");
+
+    btnNew.onclick = toggle;
+    if (btnCancel) {
+      btnCancel.onclick = () => { formNew.classList.add("hidden"); formNew.reset(); };
+    }
+
+    formNew.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = document.getElementById("np-name").value.trim();
+      const [year, q] = document.getElementById("np-start").value.split("-").map(Number);
+      const duration = parseInt(document.getElementById("np-duration").value, 10);
+      if (!name || !duration) return;
+      await apiFetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, start_year: year, start_q: q, duration }),
+      }, "Projekt angelegt");
+    };
+  }
+
+  // -- Ein-/Ausklappen --
+  function attachExpandToggles() {
+    $$(".expand-toggle").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const block = btn.closest(".project-block");
+        if (!block) return;
+        const list = block.querySelector(".steps-list");
+        btn.classList.toggle("is-open");
+        if (list) list.classList.toggle("is-open");
+      };
     });
   }
 
-  // ---------------- Modal: Manntage eintragen (ein Quartal) ----------------
-  const overlay = document.getElementById("modal-overlay");
-  const modalBody = document.getElementById("modal-body");
-  const modalProjectName = document.getElementById("modal-project-name");
-  const modalSubtitle = document.getElementById("modal-subtitle");
-  const btnClose = document.getElementById("modal-close");
-  const btnCancel = document.getElementById("modal-cancel");
-  const btnSave = document.getElementById("modal-save");
+  // -- Projekt löschen --
+  function attachProjectDeleteButtons() {
+    $$(".btn-delete-project").forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const item = btn.closest(".project-list-item");
+        const projectId = item?.dataset.projectId;
+        if (!projectId) return;
+        if (!confirm("Dieses Projekt inkl. aller Teilschritte und Stunden-Einträge wirklich löschen?")) return;
+        await apiFetch("/api/projects/" + projectId, { method: "DELETE" }, "Projekt gelöscht");
+      };
+    });
+  }
 
-  let currentContext = null; // { projectId, year, q }
+  // -- Teilschritt löschen --
+  function attachStepDeleteButtons() {
+    $$(".btn-delete-step").forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const stepId = btn.dataset.stepId;
+        if (!stepId) return;
+        if (!confirm("Diesen Teilschritt wirklich löschen?")) return;
+        await apiFetch("/api/steps/" + stepId, { method: "DELETE" }, "Teilschritt gelöscht");
+      };
+    });
+  }
 
-  document.querySelectorAll(".bar-segment:not(.bar-segment-static)").forEach((seg) => {
-    seg.addEventListener("click", () => openModal(seg));
-  });
+  // -- Balkensegmente (Stunden-Modal öffnen) --
+  function attachBarSegments() {
+    $$(".bar-segment:not(.bar-segment-static)").forEach((seg) => {
+      seg.onclick = () => openAllocationModal(seg);
+    });
+  }
 
-  function openModal(seg) {
+  // -- Bearbeiten-Buttons --
+  function attachEditButtons() {
+    $$(".btn-edit-project").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const d = btn.dataset;
+        openEditModal({
+          type: "project",
+          id: d.projectId,
+          title: "Projekt bearbeiten",
+          name: d.name,
+          startYear: d.startYear,
+          startQ: d.startQ,
+          duration: d.duration,
+          isCreate: false,
+        });
+      };
+    });
+
+    $$(".btn-edit-step").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const d = btn.dataset;
+        openEditModal({
+          type: "step",
+          id: d.stepId,
+          projectId: d.projectId,
+          title: "Teilschritt bearbeiten",
+          name: d.name,
+          startYear: d.startYear,
+          startQ: d.startQ,
+          duration: d.duration,
+          isCreate: false,
+        });
+      };
+    });
+  }
+
+  // -- Teilschritt hinzufügen --
+  function attachAddStepButtons() {
+    $$(".btn-add-step").forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const sel = document.getElementById("em-start");
+        const firstOpt = sel?.options[0]?.value?.split("-").map(Number) || [new Date().getFullYear(), 1];
+        openEditModal({
+          type: "step",
+          id: null,
+          projectId: btn.dataset.projectId,
+          title: "Teilschritt hinzufügen",
+          name: "",
+          startYear: firstOpt[0],
+          startQ: firstOpt[1],
+          duration: 1,
+          isCreate: true,
+        });
+      };
+    });
+  }
+
+  // -- "Heute"-Button --
+  function attachTodayButton() {
+    const btn = document.getElementById("btn-today");
+    if (!btn) return;
+    btn.onclick = () => {
+      const current = document.querySelector(".head-cell.is-current");
+      if (current) current.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Modal: Stunden
+  // -----------------------------------------------------------------------
+  function openAllocationModal(seg) {
     const projectId = seg.dataset.projectId;
     const projectName = seg.dataset.projectName;
     const label = seg.dataset.label;
     const year = seg.dataset.year;
     const q = seg.dataset.q;
     let alloc = [];
-    try { alloc = JSON.parse(seg.dataset.alloc); } catch (e) { alloc = []; }
+    try { alloc = JSON.parse(seg.dataset.alloc); } catch (_) { alloc = []; }
 
     currentContext = { projectId, year, q };
-    modalProjectName.textContent = projectName;
-    if (modalSubtitle) modalSubtitle.textContent = `Quartal ${label}`;
 
-    modalBody.innerHTML = "";
+    const title = document.getElementById("modal-project-name");
+    const subtitle = document.getElementById("modal-subtitle");
+    if (title) title.textContent = projectName;
+    if (subtitle) subtitle.textContent = "Quartal " + label;
+
+    const body = document.getElementById("modal-body");
+    if (!body) return;
+    body.innerHTML = "";
     alloc.forEach((a) => {
       const row = document.createElement("div");
       row.className = "modal-field";
       row.innerHTML = `
-        <label>
-          <svg class="icon-sm"><use href="#icon-person"/></svg>
-          ${a.member}
-        </label>
-        <span style="display:flex; align-items:center; gap:6px;">
-          <input type="number" min="0" step="0.5" value="${a.manntage}" data-member-id="${a.member_id}">
-          <span class="modal-field-unit">Tage</span>
-        </span>
-      `;
-      modalBody.appendChild(row);
+        <label><svg class="icon-sm"><use href="#icon-person"/></svg>${a.member}</label>
+        <span style="display:flex;align-items:center;gap:6px">
+          <input type="number" min="0" step="0.5" value="${a.stunden}" data-member-id="${a.member_id}">
+          <span class="modal-field-unit">h</span>
+        </span>`;
+      body.appendChild(row);
     });
 
-    overlay.classList.remove("hidden");
+    document.getElementById("modal-overlay").classList.remove("hidden");
   }
 
-  function closeModal() {
-    overlay.classList.add("hidden");
+  function closeAllocationModal() {
+    document.getElementById("modal-overlay").classList.add("hidden");
     currentContext = null;
   }
 
-  btnClose.addEventListener("click", closeModal);
-  btnCancel.addEventListener("click", closeModal);
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closeModal();
-  });
+  function attachAllocationModal() {
+    const overlay = document.getElementById("modal-overlay");
+    if (!overlay) return;
+    document.getElementById("modal-close").onclick = closeAllocationModal;
+    document.getElementById("modal-cancel").onclick = closeAllocationModal;
+    overlay.onclick = (e) => { if (e.target === overlay) closeAllocationModal(); };
 
-  btnSave.addEventListener("click", async () => {
-    if (!currentContext) return;
-    const values = {};
-    modalBody.querySelectorAll("input[data-member-id]").forEach((input) => {
-      values[input.dataset.memberId] = parseFloat(input.value || "0");
-    });
+    document.getElementById("modal-save").onclick = async () => {
+      if (!currentContext) return;
+      const values = {};
+      $$("input[data-member-id]", document.getElementById("modal-body")).forEach((input) => {
+        values[input.dataset.memberId] = parseFloat(input.value || "0");
+      });
+      await apiFetch("/api/allocations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: currentContext.projectId,
+          year: currentContext.year,
+          quarter: currentContext.q,
+          values,
+        }),
+      }, "Stunden gespeichert");
+    };
+  }
 
-    const res = await fetch("/api/allocations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        project_id: currentContext.projectId,
-        year: currentContext.year,
-        quarter: currentContext.q,
-        values,
-      }),
-    });
-    if (res.ok) {
-      location.reload();
-    } else {
-      alert("Speichern fehlgeschlagen.");
-    }
-  });
-
-  // ---------------- Modal: Projekt / Teilschritt bearbeiten ----------------
-  const editOverlay = document.getElementById("edit-modal-overlay");
-  const editTitle = document.getElementById("edit-modal-title");
-  const emName = document.getElementById("em-name");
-  const emStart = document.getElementById("em-start");
-  const emDuration = document.getElementById("em-duration");
-  const editClose = document.getElementById("edit-modal-close");
-  const editCancel = document.getElementById("edit-modal-cancel");
-  const editSave = document.getElementById("edit-modal-save");
-  const editDelete = document.getElementById("edit-modal-delete");
-
-  let editContext = null; // { type: 'project'|'step', id, projectId(optional, create-mode) }
-
+  // -----------------------------------------------------------------------
+  // Modal: Projekt / Teilschritt bearbeiten
+  // -----------------------------------------------------------------------
   function openEditModal(opts) {
     editContext = opts;
-    editTitle.textContent = opts.title;
-    emName.value = opts.name || "";
-    emStart.value = `${opts.startYear}-${opts.startQ}`;
-    emDuration.value = opts.duration || 1;
-    editDelete.style.display = opts.isCreate ? "none" : "";
-    editOverlay.classList.remove("hidden");
-    emName.focus();
+    document.getElementById("edit-modal-title").textContent = opts.title;
+    document.getElementById("em-name").value = opts.name || "";
+    document.getElementById("em-start").value = opts.startYear + "-" + opts.startQ;
+    document.getElementById("em-duration").value = opts.duration || 1;
+    document.getElementById("edit-modal-delete").style.display = opts.isCreate ? "none" : "";
+    document.getElementById("edit-modal-overlay").classList.remove("hidden");
+    document.getElementById("em-name").focus();
   }
 
   function closeEditModal() {
-    editOverlay.classList.add("hidden");
+    document.getElementById("edit-modal-overlay").classList.add("hidden");
     editContext = null;
   }
 
-  editClose.addEventListener("click", closeEditModal);
-  editCancel.addEventListener("click", closeEditModal);
-  editOverlay.addEventListener("click", (e) => {
-    if (e.target === editOverlay) closeEditModal();
-  });
+  function attachEditModal() {
+    const overlay = document.getElementById("edit-modal-overlay");
+    if (!overlay) return;
+    document.getElementById("edit-modal-close").onclick = closeEditModal;
+    document.getElementById("edit-modal-cancel").onclick = closeEditModal;
+    overlay.onclick = (e) => { if (e.target === overlay) closeEditModal(); };
 
-  // Projekt bearbeiten öffnen
-  document.querySelectorAll(".btn-edit-project").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const d = btn.dataset;
-      openEditModal({
-        type: "project",
-        id: d.projectId,
-        title: "Projekt bearbeiten",
-        name: d.name,
-        startYear: d.startYear,
-        startQ: d.startQ,
-        duration: d.duration,
-        isCreate: false,
-      });
-    });
-  });
+    document.getElementById("edit-modal-save").onclick = async () => {
+      if (!editContext) return;
+      const name = document.getElementById("em-name").value.trim();
+      const [year, q] = document.getElementById("em-start").value.split("-").map(Number);
+      const duration = parseInt(document.getElementById("em-duration").value, 10);
+      if (!name || !duration) return;
 
-  // Teilschritt bearbeiten öffnen
-  document.querySelectorAll(".btn-edit-step").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const d = btn.dataset;
-      openEditModal({
-        type: "step",
-        id: d.stepId,
-        projectId: d.projectId,
-        title: "Teilschritt bearbeiten",
-        name: d.name,
-        startYear: d.startYear,
-        startQ: d.startQ,
-        duration: d.duration,
-        isCreate: false,
-      });
-    });
-  });
+      const payload = { name, start_year: year, start_q: q, duration };
+      let url, method;
 
-  // Neuen Teilschritt anlegen
-  document.querySelectorAll(".btn-add-step").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const firstOpt = emStart.options[0] ? emStart.options[0].value.split("-").map(Number) : [new Date().getFullYear(), 1];
-      openEditModal({
-        type: "step",
-        id: null,
-        projectId: btn.dataset.projectId,
-        title: "Teilschritt hinzufügen",
-        name: "",
-        startYear: firstOpt[0],
-        startQ: firstOpt[1],
-        duration: 1,
-        isCreate: true,
-      });
-    });
-  });
+      if (editContext.type === "project") {
+        url = "/api/projects/" + editContext.id;
+        method = "PATCH";
+      } else if (editContext.isCreate) {
+        url = "/api/projects/" + editContext.projectId + "/steps";
+        method = "POST";
+      } else {
+        url = "/api/steps/" + editContext.id;
+        method = "PATCH";
+      }
 
-  editSave.addEventListener("click", async () => {
-    if (!editContext) return;
-    const name = emName.value.trim();
-    const [year, q] = emStart.value.split("-").map(Number);
-    const duration = parseInt(emDuration.value, 10);
-    if (!name || !duration) return;
+      const result = await apiFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }, editContext.isCreate ? "Teilschritt angelegt" : "Gespeichert");
 
-    const payload = { name, start_year: year, start_q: q, duration };
-    let url, method;
+      if (result.ok) closeEditModal();
+    };
 
-    if (editContext.type === "project") {
-      url = `/api/projects/${editContext.id}`;
-      method = "PATCH";
-    } else if (editContext.isCreate) {
-      url = `/api/projects/${editContext.projectId}/steps`;
-      method = "POST";
-    } else {
-      url = `/api/steps/${editContext.id}`;
-      method = "PATCH";
-    }
+    document.getElementById("edit-modal-delete").onclick = async () => {
+      if (!editContext) return;
+      const isProject = editContext.type === "project";
+      const msg = isProject
+        ? "Dieses Projekt inkl. aller Teilschritte und Stunden-Einträge wirklich löschen?"
+        : "Diesen Teilschritt wirklich löschen?";
+      if (!confirm(msg)) return;
+      const url = isProject
+        ? "/api/projects/" + editContext.id
+        : "/api/steps/" + editContext.id;
+      const result = await apiFetch(url, { method: "DELETE" },
+        isProject ? "Projekt gelöscht" : "Teilschritt gelöscht");
+      if (result.ok) closeEditModal();
+    };
+  }
 
-    const res = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      location.reload();
-    } else {
-      alert("Speichern fehlgeschlagen.");
-    }
-  });
-
-  editDelete.addEventListener("click", async () => {
-    if (!editContext) return;
-    const isProject = editContext.type === "project";
-    const msg = isProject
-      ? "Dieses Projekt inkl. aller Teilschritte und Manntage-Einträge wirklich löschen?"
-      : "Diesen Teilschritt wirklich löschen?";
-    if (!confirm(msg)) return;
-    const url = isProject ? `/api/projects/${editContext.id}` : `/api/steps/${editContext.id}`;
-    const res = await fetch(url, { method: "DELETE" });
-    if (res.ok) {
-      location.reload();
-    } else {
-      alert("Löschen fehlgeschlagen.");
-    }
-  });
-
-  // ---------------- Modal: Einstellungen (Mitarbeiter + max. Tage/Quartal) ----------------
-  const btnSettings = document.getElementById("btn-settings");
-  const settingsOverlay = document.getElementById("settings-modal-overlay");
-  const settingsClose = document.getElementById("settings-modal-close");
-  const settingsDone = document.getElementById("settings-modal-done");
-  const settingsList = document.getElementById("settings-member-list");
-  const settingsNewName = document.getElementById("settings-new-member-name");
-  const settingsNewMaxTage = document.getElementById("settings-new-member-maxtage");
-  const settingsAddBtn = document.getElementById("settings-add-member-btn");
-
+  // -----------------------------------------------------------------------
+  // Modal: Einstellungen
+  // -----------------------------------------------------------------------
   function openSettings() {
-    settingsOverlay.classList.remove("hidden");
+    document.getElementById("settings-modal-overlay").classList.remove("hidden");
   }
   function closeSettings() {
-    settingsOverlay.classList.add("hidden");
+    document.getElementById("settings-modal-overlay").classList.add("hidden");
   }
 
-  btnSettings.addEventListener("click", openSettings);
-  settingsClose.addEventListener("click", closeSettings);
-  settingsDone.addEventListener("click", closeSettings);
-  settingsOverlay.addEventListener("click", (e) => {
-    if (e.target === settingsOverlay) closeSettings();
-  });
+  function attachSettingsModal() {
+    const overlay = document.getElementById("settings-modal-overlay");
+    if (!overlay) return;
 
-  settingsAddBtn.addEventListener("click", async () => {
-    const name = settingsNewName.value.trim();
-    if (!name) return;
-    const maxRaw = settingsNewMaxTage.value;
-    const max_tage_quarter = maxRaw === "" ? null : parseFloat(maxRaw);
-    const res = await fetch("/api/members", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, max_tage_quarter }),
-    });
-    if (res.ok) {
-      location.reload();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || "Mitarbeiter konnte nicht hinzugefügt werden.");
-    }
-  });
-  settingsNewName.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      settingsAddBtn.click();
-    }
-  });
+    document.getElementById("btn-settings").onclick = openSettings;
+    document.getElementById("settings-modal-close").onclick = closeSettings;
+    document.getElementById("settings-modal-done").onclick = closeSettings;
+    overlay.onclick = (e) => { if (e.target === overlay) closeSettings(); };
 
-  // Max. Tage/Quartal je Mitarbeiter speichern, sobald das Feld verlassen wird
-  settingsList.querySelectorAll(".settings-max-tage-input").forEach((input) => {
-    input.addEventListener("change", async () => {
-      const memberId = input.dataset.memberId;
-      const raw = input.value;
-      const max_tage_quarter = raw === "" ? null : parseFloat(raw);
-      const res = await fetch(`/api/members/${memberId}`, {
-        method: "PATCH",
+    document.getElementById("settings-add-member-btn").onclick = async () => {
+      const name = document.getElementById("settings-new-member-name").value.trim();
+      if (!name) return;
+      const maxRaw = document.getElementById("settings-new-member-maxstunden").value;
+      const max_stunden_quarter = maxRaw === "" ? null : parseFloat(maxRaw);
+      const result = await apiFetch("/api/members", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_tage_quarter }),
-      });
-      if (!res.ok) {
-        alert("Speichern fehlgeschlagen.");
+        body: JSON.stringify({ name, max_stunden_quarter }),
+      }, "Mitarbeiter hinzugefügt");
+      if (result.ok) {
+        document.getElementById("settings-new-member-name").value = "";
+        document.getElementById("settings-new-member-maxstunden").value = "";
       }
-    });
-  });
+    };
 
-  settingsList.querySelectorAll(".btn-delete-member").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const memberId = btn.dataset.memberId;
-      if (!confirm("Diesen Mitarbeiter inkl. aller zugehörigen Manntage-Einträge wirklich entfernen?")) return;
-      const res = await fetch(`/api/members/${memberId}`, { method: "DELETE" });
-      if (res.ok) {
-        location.reload();
-      } else {
-        alert("Entfernen fehlgeschlagen.");
+    document.getElementById("settings-new-member-name").onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        document.getElementById("settings-add-member-btn").click();
       }
+    };
+
+    $$(".settings-max-stunden-input").forEach((input) => {
+      input.onchange = async () => {
+        const memberId = input.dataset.memberId;
+        const raw = input.value;
+        const max_stunden_quarter = raw === "" ? null : parseFloat(raw);
+        const res = await fetch("/api/members/" + memberId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ max_stunden_quarter }),
+        });
+        if (res.ok) {
+          showToast("Max. Stunden gespeichert", "success");
+        } else {
+          showToast("Speichern fehlgeschlagen", "error");
+        }
+      };
     });
+
+    $$(".btn-delete-member").forEach((btn) => {
+      btn.onclick = async () => {
+        const memberId = btn.dataset.memberId;
+        if (!confirm("Diesen Mitarbeiter inkl. aller zugehörigen Stunden-Einträge wirklich entfernen?")) return;
+        await apiFetch("/api/members/" + memberId, { method: "DELETE" }, "Mitarbeiter entfernt");
+      };
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Init
+  // -----------------------------------------------------------------------
+  document.addEventListener("DOMContentLoaded", () => {
+    attachAllEventListeners();
   });
-});
+})();

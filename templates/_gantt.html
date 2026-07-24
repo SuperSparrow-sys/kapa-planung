@@ -1,0 +1,66 @@
+<div class="gantt-scroll" id="gantt-scroll">
+      <div class="gantt" style="--col-count: {{ col_count }};">
+
+        <div class="gantt-row gantt-head">
+          <div class="gantt-label-cell head-cell">Projekt</div>
+          {% for qtr in quarters %}
+          <div class="gantt-cell head-cell {{ 'is-current' if qtr.is_current }}" data-qcol="{{ qtr.ord }}">
+            {{ qtr.label }}
+          </div>
+          {% endfor %}
+        </div>
+
+        {% for row in project_rows %}
+        <div class="gantt-row project-row">
+          <div class="gantt-label-cell">
+            <span class="dot" style="background:{{ row.project.color }}"></span>
+            {{ row.project.name }}
+          </div>
+          <div class="track-wrap" style="grid-column: 2 / span {{ col_count }};">
+            <div class="track-grid" style="--col-count: {{ col_count }};">
+              {% for qtr in quarters %}<div class="track-cell {{ 'is-current' if qtr.is_current }}"></div>{% endfor %}
+            </div>
+            <div class="bar project-bar {{ '' if row.geo.clipped_start else 'bar-round-start' }} {{ '' if row.geo.clipped_end else 'bar-round-end' }}"
+                 style="--left-idx:{{ row.geo.left_idx }}; --span:{{ row.geo.span_count }}; background:{{ row.project.color }};">
+              <span class="bar-label">{{ row.project.name }}{% if row.allocated_total %} · {{ row.allocated_total }} Stunden{% endif %}</span>
+              <div class="bar-segments">
+                {% for cell in row.cells %}
+                <div class="bar-segment"
+                     data-project-id="{{ row.project.id }}"
+                     data-project-name="{{ row.project.name }}"
+                     data-year="{{ cell.year }}"
+                     data-q="{{ cell.q }}"
+                     data-label="{{ cell.label }}"
+                     data-alloc='{{ cell.allocations|tojson }}'
+                     title="{{ cell.label }}: Stunden eintragen"></div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% for srow in row.steps %}
+        <div class="gantt-row step-row">
+          <div class="gantt-label-cell step-label">
+            <span class="step-dot" style="border-color:{{ row.project.color }}"></span>
+            {{ srow.step.name }}
+          </div>
+          <div class="track-wrap track-wrap-step" style="grid-column: 2 / span {{ col_count }};">
+            <div class="track-grid" style="--col-count: {{ col_count }};">
+              {% for qtr in quarters %}<div class="track-cell {{ 'is-current' if qtr.is_current }}"></div>{% endfor %}
+            </div>
+            <div class="bar step-bar {{ '' if srow.geo.clipped_start else 'bar-round-start' }} {{ '' if srow.geo.clipped_end else 'bar-round-end' }}"
+                 style="--left-idx:{{ srow.geo.left_idx }}; --span:{{ srow.geo.span_count }}; border-color:{{ row.project.color }}; color:{{ row.project.color }};"
+                 title="{{ srow.step.name }}">
+              <span class="bar-label">{{ srow.step.name }}</span>
+              <div class="bar-segments bar-segments-static">
+                {% for i in range(srow.geo.span_count) %}<div class="bar-segment bar-segment-static"></div>{% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% endfor %}
+
+        {% include '_utilization.html' %}
+      </div>
+    </div>
