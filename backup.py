@@ -256,6 +256,8 @@ def run_all_backups(cfgs: list[BackupConfig]) -> dict:
 
     for i, cfg in enumerate(cfgs, 1):
         label = f"Ziel-{i}"
+        if not cfg.nas_host:
+            continue
         logger.info("Starte Backup %s (%s@%s)", label, cfg.nas_user, cfg.nas_host)
         try:
             res = run_backup(cfg, label=label)
