@@ -13,10 +13,6 @@ LOG_LEVEL = os.environ.get("KAPA_LOG_LEVEL", "INFO")
 
 BACKUP_DIR = Path(os.environ.get("KAPA_BACKUP_DIR", BASE_DIR / "backups"))
 BACKUP_MAX_COUNT = int(os.environ.get("KAPA_BACKUP_MAX", "10"))
-BACKUP_ENV_FILE = Path(os.environ.get("KAPA_BACKUP_ENV", BASE_DIR / "backup.env"))
-
-NAS_DAILY_KEEP = int(os.environ.get("KAPA_NAS_DAILY_KEEP", "7"))
-NAS_AUTO = os.environ.get("KAPA_NAS_AUTO", "False").lower() in ("1", "true", "yes")
 
 RATE_LIMIT_REQUESTS = int(os.environ.get("KAPA_RATE_LIMIT", "60"))
 RATE_LIMIT_WINDOW = int(os.environ.get("KAPA_RATE_WINDOW", "60"))

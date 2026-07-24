@@ -3,8 +3,17 @@
 from flask import Blueprint, jsonify, request
 
 from database import get_db, project_exists, step_exists
+from history import record_action
 
 bp = Blueprint("steps", __name__)
+
+
+def _escape_sql(val) -> str:
+    if val is None:
+        return "NULL"
+    if isinstance(val, str):
+        return "'" + val.replace("'", "''") + "'"
+    return str(val)
 
 
 @bp.route("/api/projects/<int:project_id>/steps", methods=["POST"])
@@ -32,17 +41,31 @@ def create_step(project_id):
             "VALUES (?,?,?,?,?)",
             (project_id, name, start_year, start_q, duration),
         )
+        sid = cur.lastrowid
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return jsonify({"id": cur.lastrowid})
+
+    record_action(
+        f"Teilschritt »{name}« angelegt",
+        f"DELETE FROM project_steps WHERE id = {sid}",
+        f"INSERT INTO project_steps (id, project_id, name, start_year, start_q, duration) "
+        f"VALUES ({sid}, {project_id}, {_escape_sql(name)}, {start_year}, {start_q}, {duration})",
+    )
+    return jsonify({"id": sid})
 
 
 @bp.route("/api/steps/<int:step_id>", methods=["PATCH"])
 def update_step(step_id):
-    if not step_exists(get_db(), step_id):
+    db = get_db()
+    if not step_exists(db, step_id):
         return jsonify({"error": "Teilschritt nicht gefunden"}), 404
+
+    old = db.execute(
+        "SELECT name, start_year, start_q, duration FROM project_steps WHERE id = ?",
+        (step_id,),
+    ).fetchone()
 
     data = request.get_json(force=True)
     fields = {}
@@ -76,7 +99,6 @@ def update_step(step_id):
     if not fields:
         return jsonify({"error": "Keine Felder zum Aktualisieren"}), 400
 
-    db = get_db()
     try:
         db.execute("BEGIN IMMEDIATE")
         set_clause = ", ".join(f"{k} = ?" for k in fields)
@@ -88,15 +110,33 @@ def update_step(step_id):
     except Exception:
         db.rollback()
         raise
+
+    undo_set = ", ".join(
+        f"{k} = {_escape_sql(old[k])}" for k in ("name", "start_year", "start_q", "duration")
+    )
+    new_vals = {k: fields.get(k, old[k]) for k in ("name", "start_year", "start_q", "duration")}
+    redo_set = ", ".join(
+        f"{k} = {_escape_sql(new_vals[k])}" for k in ("name", "start_year", "start_q", "duration")
+    )
+    record_action(
+        f"Teilschritt »{old['name']}« bearbeitet",
+        f"UPDATE project_steps SET {undo_set} WHERE id = {step_id}",
+        f"UPDATE project_steps SET {redo_set} WHERE id = {step_id}",
+    )
     return jsonify({"ok": True})
 
 
 @bp.route("/api/steps/<int:step_id>", methods=["DELETE"])
 def delete_step(step_id):
-    if not step_exists(get_db(), step_id):
+    db = get_db()
+    if not step_exists(db, step_id):
         return jsonify({"error": "Teilschritt nicht gefunden"}), 404
 
-    db = get_db()
+    step = db.execute(
+        "SELECT id, project_id, name, start_year, start_q, duration FROM project_steps WHERE id = ?",
+        (step_id,),
+    ).fetchone()
+
     try:
         db.execute("BEGIN IMMEDIATE")
         db.execute("DELETE FROM project_steps WHERE id = ?", (step_id,))
@@ -104,4 +144,12 @@ def delete_step(step_id):
     except Exception:
         db.rollback()
         raise
+
+    record_action(
+        f"Teilschritt »{step['name']}« gelöscht",
+        f"INSERT INTO project_steps (id, project_id, name, start_year, start_q, duration) "
+        f"VALUES ({step['id']}, {step['project_id']}, {_escape_sql(step['name'])}, "
+        f"{step['start_year']}, {step['start_q']}, {step['duration']})",
+        f"DELETE FROM project_steps WHERE id = {step_id}",
+    )
     return jsonify({"ok": True})

@@ -5,8 +5,17 @@ from flask import Blueprint, jsonify, request
 import config
 from calendar_utils import q_ord
 from database import get_db, project_exists
+from history import record_action
 
 bp = Blueprint("projects", __name__)
+
+
+def _escape_sql(val) -> str:
+    if val is None:
+        return "NULL"
+    if isinstance(val, str):
+        return "'" + val.replace("'", "''") + "'"
+    return str(val)
 
 
 @bp.route("/api/projects", methods=["POST"])
@@ -33,17 +42,31 @@ def create_project():
             "VALUES (?,?,?,?,?)",
             (name, start_year, start_q, duration, color),
         )
+        pid = cur.lastrowid
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return jsonify({"id": cur.lastrowid})
+
+    record_action(
+        f"Projekt »{name}« angelegt",
+        f"DELETE FROM projects WHERE id = {pid}",
+        f"INSERT INTO projects (id, name, start_year, start_q, duration, color) "
+        f"VALUES ({pid}, {_escape_sql(name)}, {start_year}, {start_q}, {duration}, {_escape_sql(color)})",
+    )
+    return jsonify({"id": pid})
 
 
 @bp.route("/api/projects/<int:project_id>", methods=["PATCH"])
 def update_project(project_id):
-    if not project_exists(get_db(), project_id):
+    db = get_db()
+    if not project_exists(db, project_id):
         return jsonify({"error": "Projekt nicht gefunden"}), 404
+
+    old = db.execute(
+        "SELECT name, start_year, start_q, duration FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
 
     data = request.get_json(force=True)
     fields = {}
@@ -77,19 +100,14 @@ def update_project(project_id):
     if not fields:
         return jsonify({"error": "Keine Felder zum Aktualisieren"}), 400
 
-    db = get_db()
     try:
         db.execute("BEGIN IMMEDIATE")
 
         if "start_year" in fields or "start_q" in fields or "duration" in fields:
-            project = db.execute(
-                "SELECT start_year, start_q, duration FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone()
-            if project:
-                new_start_year = fields.get("start_year", project["start_year"])
-                new_start_q = fields.get("start_q", project["start_q"])
-                new_duration = fields.get("duration", project["duration"])
+            if old:
+                new_start_year = fields.get("start_year", old["start_year"])
+                new_start_q = fields.get("start_q", old["start_q"])
+                new_duration = fields.get("duration", old["duration"])
                 new_start_ord = q_ord(new_start_year, new_start_q)
                 new_end_ord = new_start_ord + new_duration - 1
 
@@ -122,15 +140,41 @@ def update_project(project_id):
     except Exception:
         db.rollback()
         raise
+
+    new_vals = {k: fields.get(k, old[k]) for k in ("name", "start_year", "start_q", "duration")}
+    undo_set = ", ".join(
+        f"{k} = {_escape_sql(old[k])}" for k in ("name", "start_year", "start_q", "duration")
+    )
+    redo_set = ", ".join(
+        f"{k} = {_escape_sql(new_vals[k])}" for k in ("name", "start_year", "start_q", "duration")
+    )
+    record_action(
+        f"Projekt »{old['name']}« bearbeitet",
+        f"UPDATE projects SET {undo_set} WHERE id = {project_id}",
+        f"UPDATE projects SET {redo_set} WHERE id = {project_id}",
+    )
     return jsonify({"ok": True})
 
 
 @bp.route("/api/projects/<int:project_id>", methods=["DELETE"])
 def delete_project(project_id):
-    if not project_exists(get_db(), project_id):
+    db = get_db()
+    if not project_exists(db, project_id):
         return jsonify({"error": "Projekt nicht gefunden"}), 404
 
-    db = get_db()
+    project = db.execute(
+        "SELECT id, name, start_year, start_q, duration, color FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    steps = db.execute(
+        "SELECT id, project_id, name, start_year, start_q, duration FROM project_steps WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    allocs = db.execute(
+        "SELECT project_id, year, quarter, team_member_id, stunden FROM allocations WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+
     try:
         db.execute("BEGIN IMMEDIATE")
         db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
@@ -138,4 +182,29 @@ def delete_project(project_id):
     except Exception:
         db.rollback()
         raise
+
+    redo_sql_parts = [f"DELETE FROM projects WHERE id = {project_id}"]
+
+    undo_parts = [
+        f"INSERT INTO projects (id, name, start_year, start_q, duration, color) "
+        f"VALUES ({project['id']}, {_escape_sql(project['name'])}, "
+        f"{project['start_year']}, {project['start_q']}, {project['duration']}, {_escape_sql(project['color'])})"
+    ]
+    for s in steps:
+        undo_parts.append(
+            f"INSERT INTO project_steps (id, project_id, name, start_year, start_q, duration) "
+            f"VALUES ({s['id']}, {s['project_id']}, {_escape_sql(s['name'])}, "
+            f"{s['start_year']}, {s['start_q']}, {s['duration']})"
+        )
+    for a in allocs:
+        undo_parts.append(
+            f"INSERT INTO allocations (project_id, year, quarter, team_member_id, stunden) "
+            f"VALUES ({a['project_id']}, {a['year']}, {a['quarter']}, {a['team_member_id']}, {a['stunden']})"
+        )
+
+    record_action(
+        f"Projekt »{project['name']}« gelöscht",
+        ";\n".join(undo_parts),
+        ";\n".join(redo_sql_parts),
+    )
     return jsonify({"ok": True})

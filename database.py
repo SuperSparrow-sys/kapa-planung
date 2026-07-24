@@ -100,11 +100,29 @@ def init_db():
             stunden REAL NOT NULL DEFAULT 0,
             UNIQUE(project_id, year, quarter, team_member_id)
         );
+
+        CREATE TABLE IF NOT EXISTS action_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            description TEXT NOT NULL,
+            undo_sql TEXT NOT NULL,
+            redo_sql TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS undo_pointer (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            current_position INTEGER NOT NULL DEFAULT 0
+        );
         """
     )
 
     if not _column_exists(db, "team_members", "max_stunden_quarter"):
         db.execute("ALTER TABLE team_members ADD COLUMN max_stunden_quarter REAL")
+
+    db.execute("""
+        INSERT OR IGNORE INTO undo_pointer (id, current_position)
+        VALUES (1, 0)
+    """)
 
     existing = {r["name"] for r in db.execute("SELECT name FROM team_members")}
     for name in config.TEAM_MEMBERS_SEED:

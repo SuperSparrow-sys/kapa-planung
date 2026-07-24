@@ -1,10 +1,11 @@
-"""Datenbank-Backup: lokal + optional via SCP auf NAS.
+"""Backup: lokal + via SCP auf NAS (bis zu 2 Ziele).
 
-Aufruf via CLI:  python backup.py
-Aufruf via API:   POST /api/backup/run
-Automatisch:      taeglich 02:00 + 22:00 (wenn KAPA_BACKUP_NAS_AUTO=true)
+Konfiguration: backup.env (Laufzeit, gitignored)
+Stats:         backup_stats.json
+API:            POST /api/backup/run, GET /api/backup/status
 """
 
+import json
 import logging
 import os
 import shutil
@@ -19,23 +20,16 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Bekannte Schluessel in backup.env
-_BEKANNTE_SCHLUESSEL = {
-    "BACKUP_LETZTER_LAUF", "BACKUP_LAEUFE_JAHR", "BACKUP_LAEUFE_ANZAHL",
-    "KAPA_BACKUP_NAS_HOST", "KAPA_BACKUP_NAS_USER", "KAPA_BACKUP_NAS_BASE", "KAPA_BACKUP_NAS_KEY",
-    "KAPA_NAS_AUTO", "KAPA_NAS_DAILY_KEEP",
-}
+_BASIS = os.path.dirname(os.path.abspath(__file__))
+_ENV_PFAD = os.path.join(_BASIS, "backup.env")
+_STATS_PFAD = os.path.join(_BASIS, "backup_stats.json")
 
 
-# ---------------------------------------------------------------------------
-# Stats-Persistenz (backup.env)
-# ---------------------------------------------------------------------------
-
-def _backup_env_lesen() -> dict:
+def _env_lesen() -> dict:
     result = {}
-    if not config.BACKUP_ENV_FILE.exists():
+    if not os.path.exists(_ENV_PFAD):
         return result
-    with open(config.BACKUP_ENV_FILE, encoding="utf-8") as f:
+    with open(_ENV_PFAD, encoding="utf-8-sig") as f:
         for zeile in f:
             zeile = zeile.strip()
             if not zeile or zeile.startswith("#") or "=" not in zeile:
@@ -45,120 +39,133 @@ def _backup_env_lesen() -> dict:
     return result
 
 
-def _backup_env_schreiben(daten: dict) -> None:
+def _env_schreiben(daten: dict) -> None:
+    bekannte_schluessel = {
+        "BACKUP_UNLOCK_PASSWORD",
+        "BACKUP_1_HOST", "BACKUP_1_USER", "BACKUP_1_BASE", "BACKUP_1_SSH_KEY",
+        "BACKUP_2_HOST", "BACKUP_2_USER", "BACKUP_2_BASE", "BACKUP_2_SSH_KEY",
+    }
     zeilen = []
-    if config.BACKUP_ENV_FILE.exists():
-        with open(config.BACKUP_ENV_FILE, encoding="utf-8") as f:
+    if os.path.exists(_ENV_PFAD):
+        with open(_ENV_PFAD, encoding="utf-8-sig") as f:
             zeilen = f.readlines()
-    neue = []
+    neue_zeilen = []
     gesehen = set()
     for zeile in zeilen:
         stripped = zeile.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
-            neue.append(zeile)
+            neue_zeilen.append(zeile)
             continue
         key = stripped.split("=", 1)[0].strip()
-        if key in _BEKANNTE_SCHLUESSEL:
-            neue.append(f"{key}={daten.get(key, '')}\n")
+        if key in bekannte_schluessel:
+            wert = daten.get(key, "")
+            neue_zeilen.append(f"{key}={wert}\n")
             gesehen.add(key)
         else:
-            neue.append(zeile)
-    for key in sorted(_BEKANNTE_SCHLUESSEL):
+            neue_zeilen.append(zeile)
+    for key in bekannte_schluessel:
         if key not in gesehen:
-            neue.append(f"{key}={daten.get(key, '')}\n")
-    config.BACKUP_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(config.BACKUP_ENV_FILE, "w", encoding="utf-8") as f:
-        f.writelines(neue)
+            wert = daten.get(key, "")
+            neue_zeilen.append(f"{key}={wert}\n")
+    with open(_ENV_PFAD, "w", encoding="utf-8") as f:
+        f.writelines(neue_zeilen)
+
+
+def _stats_laden() -> dict:
+    if os.path.exists(_STATS_PFAD):
+        try:
+            with open(_STATS_PFAD, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _stats_speichern(stats: dict) -> None:
+    try:
+        Path(_STATS_PFAD).parent.mkdir(parents=True, exist_ok=True)
+        with open(_STATS_PFAD, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Backup-Statistik konnte nicht gespeichert werden: %s", e)
 
 
 def backup_stats_lesen() -> dict:
-    env = _backup_env_lesen()
-    return {
-        "last_run": env.get("BACKUP_LETZTER_LAUF", ""),
-        "laeufe_anzahl": int(env.get("BACKUP_LAEUFE_ANZAHL", "0") or 0),
-        "laeufe_jahr": int(env.get("BACKUP_LAEUFE_JAHR", "0") or 0),
-    }
+    return _stats_laden()
 
 
 def _backup_stats_schreiben(zeitstempel: str, anzahl: int, jahr: int) -> None:
-    env = _backup_env_lesen()
-    env["BACKUP_LETZTER_LAUF"] = zeitstempel
-    env["BACKUP_LAEUFE_ANZAHL"] = str(anzahl)
-    env["BACKUP_LAEUFE_JAHR"] = str(jahr)
-    _backup_env_schreiben(env)
+    stats = _stats_laden()
+    year_key = str(jahr)
+    if year_key not in stats:
+        stats[year_key] = {}
+    stats[year_key]["count"] = anzahl
+    stats[year_key]["last_run"] = zeitstempel
+    _stats_speichern(stats)
 
-
-# ---------------------------------------------------------------------------
-# NAS Backup via SCP
-# ---------------------------------------------------------------------------
 
 @dataclass
-class NasConfig:
-    host: str = ""
-    user: str = ""
-    base: str = ""
-    key_path: str = ""
+class BackupConfig:
+    nas_host: str = ""
+    nas_user: str = ""
+    nas_base: str = ""
+    nas_key_path: str = ""
 
 
-def _nas_configured() -> bool:
-    env = _backup_env_lesen()
-    host = os.environ.get("KAPA_BACKUP_NAS_HOST", env.get("KAPA_BACKUP_NAS_HOST", ""))
-    user = os.environ.get("KAPA_BACKUP_NAS_USER", env.get("KAPA_BACKUP_NAS_USER", ""))
-    base = os.environ.get("KAPA_BACKUP_NAS_BASE", env.get("KAPA_BACKUP_NAS_BASE", ""))
-    return bool(host and user and base)
-
-
-def _nas_config() -> NasConfig:
-    env = _backup_env_lesen()
-    return NasConfig(
-        host=os.environ.get("KAPA_BACKUP_NAS_HOST", env.get("KAPA_BACKUP_NAS_HOST", "")),
-        user=os.environ.get("KAPA_BACKUP_NAS_USER", env.get("KAPA_BACKUP_NAS_USER", "")),
-        base=os.environ.get("KAPA_BACKUP_NAS_BASE", env.get("KAPA_BACKUP_NAS_BASE", "")),
-        key_path=os.environ.get("KAPA_BACKUP_NAS_KEY", env.get("KAPA_BACKUP_NAS_KEY", "")),
+def _backup_ziel_laden(idx: int) -> BackupConfig:
+    env = _env_lesen()
+    p = str(idx)
+    return BackupConfig(
+        nas_host=env.get(f"BACKUP_{p}_HOST", ""),
+        nas_user=env.get(f"BACKUP_{p}_USER", ""),
+        nas_base=env.get(f"BACKUP_{p}_BASE", ""),
+        nas_key_path=env.get(f"BACKUP_{p}_SSH_KEY", ""),
     )
 
 
-def nas_config_export() -> NasConfig:
-    return _nas_config()
+def _backup_ziel_speichern(idx: int, z: BackupConfig) -> None:
+    p = str(idx)
+    data = _env_lesen()
+    data[f"BACKUP_{p}_HOST"] = z.nas_host
+    data[f"BACKUP_{p}_USER"] = z.nas_user
+    data[f"BACKUP_{p}_BASE"] = z.nas_base
+    data[f"BACKUP_{p}_SSH_KEY"] = z.nas_key_path
+    _env_schreiben(data)
 
 
-def _ssh_key_option(cfg: NasConfig) -> list[str]:
-    if cfg.key_path:
-        return ["-i", cfg.key_path]
+def _ssh_key_option(cfg: BackupConfig) -> list[str]:
+    if cfg.nas_key_path:
+        return ["-i", cfg.nas_key_path]
     return []
 
 
-def _ssh_cmd(cfg: NasConfig, *args) -> subprocess.CompletedProcess:
+def _ssh_cmd(cfg: BackupConfig, *args) -> subprocess.CompletedProcess:
     cmd = ["ssh"]
     cmd.extend(_ssh_key_option(cfg))
     cmd.extend([
         "-o", "StrictHostKeyChecking=no",
         "-o", "ConnectTimeout=20",
         "-o", "BatchMode=yes",
-        f"{cfg.user}@{cfg.host}",
+        f"{cfg.nas_user}@{cfg.nas_host}",
         *args,
     ])
     return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
 
-def _scp_transfer(cfg: NasConfig, local: Path, remote: str) -> bool:
+def _scp_transfer(cfg: BackupConfig, local: Path, remote: str) -> bool:
     cmd = ["scp", "-O"]
     cmd.extend(_ssh_key_option(cfg))
     cmd.extend([
         "-o", "StrictHostKeyChecking=no",
         "-o", "ConnectTimeout=20",
         str(local),
-        f"{cfg.user}@{cfg.host}:{remote}",
+        f"{cfg.nas_user}@{cfg.nas_host}:{remote}",
     ])
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         logger.warning("SCP-Fehler (rc=%d): %s", r.returncode, r.stderr.strip()[:200])
     return r.returncode == 0
 
-
-# ---------------------------------------------------------------------------
-# Backup-Logik
-# ---------------------------------------------------------------------------
 
 def _backup_sqlite(src: Path, dst: Path) -> bool:
     try:
@@ -174,113 +181,113 @@ def _backup_sqlite(src: Path, dst: Path) -> bool:
             shutil.copy2(src, dst)
             return dst.exists()
         except Exception as exc2:
-            logger.error("Copy fallback fehlgeschlagen: %s", exc2)
+            logger.error("Copy fallback auch fehlgeschlagen: %s", exc2)
             return False
 
 
-def run_backup(nas: NasConfig | None = None) -> dict:
+def run_backup(cfg: BackupConfig, label: str = "") -> dict:
+    result = {"success": False, "message": "", "files": 0, "errors": [], "label": label}
+    src = config.DB_PATH
+    if not src.exists():
+        result["message"] = "kapa.db nicht gefunden"
+        return result
+
+    r = _ssh_cmd(cfg, "echo", "ok")
+    if r.returncode != 0 or r.stdout.strip() != "ok":
+        err = r.stderr.strip() or "SSH-Verbindung fehlgeschlagen"
+        result["message"] = f"SSH-Fehler: {err}"
+        return result
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="kapa_backup_"))
     errors = []
-    files_ok = 0
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
-    src = config.DB_PATH
 
-    if not src.exists():
-        return {"success": False, "message": "Datenbank nicht gefunden", "files": 0, "errors": ["kapa.db existiert nicht"]}
-
-    # ── 1. Lokales Backup ────────────────────────────────────────────
-    config.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = now.strftime("%Y%m%d_%H%M%S")
-    local_dst = config.BACKUP_DIR / f"kapa_backup_{timestamp}.db"
-
-    if _backup_sqlite(src, local_dst):
-        files_ok += 1
-        logger.info("Lokales Backup OK: %s", local_dst.name)
-        # Rotation
-        backups = sorted(config.BACKUP_DIR.glob("kapa_backup_*.db"))
-        while len(backups) > config.BACKUP_MAX_COUNT:
-            oldest = backups.pop(0)
-            oldest.unlink()
-    else:
-        errors.append("Lokales Backup fehlgeschlagen")
-
-    # ── 2. NAS-Backup (optional) ─────────────────────────────────────
-    if nas is None and _nas_configured():
-        nas = _nas_config()
-
-    if nas and nas.host:
-        logger.info("Starte NAS-Backup %s@%s", nas.user, nas.host)
-
-        r = _ssh_cmd(nas, "echo", "ok")
-        if r.returncode != 0 or r.stdout.strip() != "ok":
-            msg = r.stderr.strip() or "SSH-Verbindung fehlgeschlagen"
-            errors.append(f"SSH-Fehler: {msg}")
+    try:
+        tmp_file = tmp_dir / "kapa.db"
+        if not _backup_sqlite(src, tmp_file):
+            errors.append("Lokale Kopie fehlgeschlagen")
         else:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="kapa_nas_"))
-            try:
-                tmp_file = tmp_dir / "kapa.db"
-                if _backup_sqlite(src, tmp_file):
-                    remote_dir = f"{nas.base}/daily/{today}"
-                    r2 = _ssh_cmd(nas, "mkdir", "-p", remote_dir)
-                    if r2.returncode != 0:
-                        errors.append("NAS mkdir fehlgeschlagen")
-                    elif _scp_transfer(nas, tmp_file, f"{remote_dir}/kapa.db"):
-                        files_ok += 1
-                        size_kb = tmp_file.stat().st_size // 1024
-                        logger.info("NAS-Backup OK: %s/daily/%s/kapa.db (%d KB)", nas.base, today, size_kb)
-                    else:
-                        errors.append("NAS-Upload fehlgeschlagen")
-                else:
-                    errors.append("NAS lokale Kopie fehlgeschlagen")
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            size = tmp_file.stat().st_size
+            remote_dir = f"{cfg.nas_base}/daily/{today}"
+            r2 = _ssh_cmd(cfg, "mkdir", "-p", remote_dir)
+            if r2.returncode != 0:
+                errors.append("NAS mkdir fehlgeschlagen")
+            elif _scp_transfer(cfg, tmp_file, f"{remote_dir}/kapa.db"):
+                result["files"] += 1
+                logger.info("Backup OK (%s): kapa.db -> %s/daily/%s/ (%d KB)",
+                            label or cfg.nas_host, cfg.nas_base, today, size // 1024)
+            else:
+                errors.append("NAS-Upload fehlgeschlagen")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
-            # Alte daily-Verzeichnisse aufräumen
-            try:
-                r = _ssh_cmd(nas, "ls", "-1d", f"{nas.base}/daily/????-??-??")
-                if r.returncode == 0 and r.stdout.strip():
-                    dirs = sorted(d.strip() for d in r.stdout.splitlines() if d.strip())
-                    for d in dirs[:-config.NAS_DAILY_KEEP]:
-                        _ssh_cmd(nas, "rm", "-rf", d)
-            except Exception as exc:
-                logger.warning("NAS-Cleanup daily fehlgeschlagen: %s", exc)
+    # ── Aufräumen: letzte 7 daily behalten ─────────────────────────
+    try:
+        r = _ssh_cmd(cfg, "ls", "-1d", f"{cfg.nas_base}/daily/????-??-??")
+        if r.returncode == 0 and r.stdout.strip():
+            dirs = sorted(d.strip() for d in r.stdout.splitlines() if d.strip())
+            for d in dirs[:-7]:
+                _ssh_cmd(cfg, "rm", "-rf", d)
+    except Exception as exc:
+        logger.warning("Cleanup daily fehlgeschlagen: %s", exc)
 
-    if not errors and files_ok > 0:
-        msg = f"{files_ok} Datei(en) gesichert"
-        success = True
-        logger.info("Backup erfolgreich: %s", msg)
+    if not errors and result["files"] > 0:
+        result["success"] = True
+        result["message"] = f"{result['files']} Datei(en) gesichert ({label or cfg.nas_host})"
+        logger.info("Backup %s erfolgreich", label or cfg.nas_host)
     else:
-        msg = "Backup-Fehler: " + ("; ".join(errors) if errors else "keine Dateien gesichert")
-        success = files_ok > 0
-        if errors:
-            logger.warning(msg)
+        err_text = "; ".join(errors) if errors else "Keine Dateien gesichert"
+        result["message"] = err_text
+        logger.warning("Backup %s fehlgeschlagen: %s", label or cfg.nas_host, err_text)
 
-    # ── Statistiken aktualisieren ────────────────────────────────────
-    zeitstempel = now.strftime("%Y-%m-%dT%H:%M:%S")
-    aktuelles_jahr = now.year
-    stats = backup_stats_lesen()
-    anzahl = (stats["laeufe_anzahl"] if stats["laeufe_jahr"] == aktuelles_jahr else 0) + 1
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+def run_all_backups(cfgs: list[BackupConfig]) -> dict:
+    ergebnisse = []
+    gesamt_dateien = 0
+    gesamt_fehler = []
+
+    for i, cfg in enumerate(cfgs, 1):
+        label = f"Ziel-{i}"
+        logger.info("Starte Backup %s (%s@%s)", label, cfg.nas_user, cfg.nas_host)
+        try:
+            res = run_backup(cfg, label=label)
+        except Exception as exc:
+            res = {"success": False, "message": str(exc), "files": 0, "errors": [str(exc)], "label": label}
+        ergebnisse.append(res)
+        if res["success"]:
+            gesamt_dateien += res["files"]
+        if res["errors"]:
+            gesamt_fehler.extend(res["errors"])
+
+    erfolgreich = sum(1 for r in ergebnisse if r["success"])
+    fehlgeschlagen = sum(1 for r in ergebnisse if not r["success"])
+
+    msg_parts = []
+    if erfolgreich:
+        msg_parts.append(f"{erfolgreich}/{len(cfgs)} Ziel(e) OK ({gesamt_dateien} Dateien)")
+    if fehlgeschlagen:
+        msg_parts.append(f"{fehlgeschlagen} Ziel(e) fehlgeschlagen")
+
+    jetzt = datetime.now()
+    zeitstempel = jetzt.isoformat()
+    aktuelles_jahr = jetzt.year
+    stats = _stats_laden()
+    year_key = str(aktuelles_jahr)
+    year_data = stats.get(year_key, {})
+    anzahl = year_data.get("count", 0) + 1
     _backup_stats_schreiben(zeitstempel, anzahl, aktuelles_jahr)
 
     return {
-        "success": success,
-        "message": msg,
-        "files": files_ok,
-        "errors": errors,
+        "success": erfolgreich > 0,
+        "message": ", ".join(msg_parts) if msg_parts else "Alle fehlgeschlagen",
+        "files": gesamt_dateien,
+        "errors": gesamt_fehler,
+        "ergebnisse": ergebnisse,
         "last_run": zeitstempel,
         "runs_this_year": anzahl,
     }
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    from database import init_db
-    init_db()
-    result = run_backup()
-    print(result["message"])
-    if result["errors"]:
-        for e in result["errors"]:
-            print(f"  - {e}")

@@ -7,3 +7,4 @@ venv/
 *.log
 backups/
 backup.env
+backup_stats.json

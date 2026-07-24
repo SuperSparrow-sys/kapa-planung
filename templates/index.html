@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
@@ -53,6 +54,12 @@
     <div class="topbar">
       <h1>Kapazitätsplanung</h1>
       <div class="topbar-actions">
+        <button id="btn-undo" class="icon-btn btn-undo" title="Rückgängig" disabled>
+          <i data-lucide="undo-2" class="icon-sm"></i>
+        </button>
+        <button id="btn-redo" class="icon-btn btn-redo" title="Wiederherstellen" disabled>
+          <i data-lucide="redo-2" class="icon-sm"></i>
+        </button>
         <button id="btn-today" class="btn-text-icon">
           <svg class="icon-sm"><use href="#icon-target"/></svg>
           Heute ({{ current_label }})
@@ -158,6 +165,10 @@
         <input type="text" id="settings-new-member-name" placeholder="Name des Mitarbeiters">
         <input type="number" min="0" step="0.5" id="settings-new-member-maxstunden" placeholder="Max. h/Q.">
         <button id="settings-add-member-btn" class="btn-primary">Hinzufügen</button>
+      </div>
+      <div class="settings-backup">
+        <button id="btn-backup-now" class="btn-text">Backup jetzt erstellen</button>
+        <span id="backup-status" class="settings-backup-status"></span>
       </div>
     </div>
     <div class="modal-footer">

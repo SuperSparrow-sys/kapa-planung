@@ -292,6 +292,7 @@ html, body {
 }
 
 .icon-sm { width: 18px; height: 18px; }
+.icon-sm.lucide, i.icon-sm svg { width: 18px; height: 18px; }
 
 /* ---------- Main ---------- */
 .main {
@@ -328,6 +329,20 @@ html, body {
   padding: 8px;
 }
 .btn-settings:hover { background: var(--blue-tint); color: var(--blue); border-color: var(--blue); }
+.btn-undo, .btn-redo {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  padding: 8px;
+}
+.btn-undo:disabled, .btn-redo:disabled {
+  opacity: .35;
+  cursor: default;
+}
+.btn-undo:not(:disabled):hover, .btn-redo:not(:disabled):hover {
+  background: var(--blue-tint);
+  color: var(--blue);
+  border-color: var(--blue);
+}
 
 /* ---------- Kalender-Zeitstrahl (kein Tabellen-Look) ---------- */
 .gantt-scroll {
@@ -354,7 +369,7 @@ html, body {
   position: sticky;
   left: 0;
   background: var(--surface);
-  padding: 8px 14px;
+  padding: 4px 14px;
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -362,7 +377,9 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  z-index: 2;
+  z-index: 6;
+  min-height: 46px;
+  box-sizing: border-box;
 }
 
 .step-label {
@@ -371,6 +388,7 @@ html, body {
   padding-left: 30px;
   padding-top: 2px;
   padding-bottom: 2px;
+  min-height: 30px;
 }
 
 .head-cell {
@@ -383,8 +401,16 @@ html, body {
   position: sticky;
   top: 0;
 }
-.gantt-row.gantt-head { position: sticky; top: 0; z-index: 3; }
-.gantt-row.gantt-head .gantt-label-cell { z-index: 4; }
+.gantt-head .gantt-label-cell {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 7;
+  background: var(--surface);
+}
+.gantt-head .gantt-label-cell.head-cell {
+  padding: 10px 14px 14px;
+}
 
 .gantt-cell.head-cell {
   display: flex;
@@ -765,6 +791,23 @@ html, body {
   outline: 2px solid var(--blue);
   outline-offset: -1px;
   border-color: var(--blue);
+}
+
+.settings-backup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+.settings-backup-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Toast ---------- */

@@ -71,6 +71,8 @@
       updateAppData(partial);
       restoreScrollPositions(positions);
       attachAllEventListeners();
+      refreshHistoryButtons();
+      if (window.lucide) lucide.createIcons();
 
       if (successMsg) showToast(successMsg, "success");
     } catch (e) {
@@ -472,6 +474,81 @@
         await apiFetch("/api/members/" + memberId, { method: "DELETE" }, "Mitarbeiter entfernt");
       };
     });
+
+    const btnBackup = document.getElementById("btn-backup-now");
+    const backupStatus = document.getElementById("backup-status");
+    if (btnBackup && backupStatus) {
+      btnBackup.onclick = async () => {
+        btnBackup.disabled = true;
+        backupStatus.textContent = "Läuft...";
+        try {
+          const res = await fetch("/api/backup/run", { method: "POST" });
+          const data = await res.json();
+          let msg = data.message;
+          if (data.ergebnisse) {
+            const details = data.ergebnisse.map(r =>
+              (r.success ? "OK" : "FAIL") + " " + r.label + ": " + r.message
+            ).join(" | ");
+            if (details) msg += " (" + details + ")";
+          }
+          backupStatus.textContent = msg;
+          showToast(msg, data.success ? "success" : "error");
+        } catch (e) {
+          backupStatus.textContent = "Fehlgeschlagen";
+          showToast("Backup fehlgeschlagen", "error");
+        } finally {
+          btnBackup.disabled = false;
+        }
+      };
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Undo / Redo
+  // -----------------------------------------------------------------------
+  async function refreshHistoryButtons() {
+    try {
+      const res = await fetch("/api/history/status");
+      const s = await res.json();
+      const btnUndo = document.getElementById("btn-undo");
+      const btnRedo = document.getElementById("btn-redo");
+      if (btnUndo) {
+        btnUndo.disabled = !s.can_undo;
+        btnUndo.title = s.undo_description || "Rückgängig";
+      }
+      if (btnRedo) {
+        btnRedo.disabled = !s.can_redo;
+        btnRedo.title = s.redo_description || "Wiederherstellen";
+      }
+    } catch (_) {}
+  }
+
+  async function doUndo() {
+    const res = await fetch("/api/undo", { method: "POST" });
+    const data = await res.json();
+    showToast(data.message, data.success ? "success" : "error");
+    if (data.success) {
+      await refreshPage();
+      refreshHistoryButtons();
+    }
+  }
+
+  async function doRedo() {
+    const res = await fetch("/api/redo", { method: "POST" });
+    const data = await res.json();
+    showToast(data.message, data.success ? "success" : "error");
+    if (data.success) {
+      await refreshPage();
+      refreshHistoryButtons();
+    }
+  }
+
+  function attachUndoRedo() {
+    const btnUndo = document.getElementById("btn-undo");
+    const btnRedo = document.getElementById("btn-redo");
+    if (btnUndo) btnUndo.onclick = doUndo;
+    if (btnRedo) btnRedo.onclick = doRedo;
+    refreshHistoryButtons();
   }
 
   // -----------------------------------------------------------------------
@@ -479,5 +556,7 @@
   // -----------------------------------------------------------------------
   document.addEventListener("DOMContentLoaded", () => {
     attachAllEventListeners();
+    attachUndoRedo();
+    if (window.lucide) lucide.createIcons();
   });
 })();

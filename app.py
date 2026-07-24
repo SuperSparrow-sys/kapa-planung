@@ -1,5 +1,4 @@
 import logging
-import threading
 import time
 from collections import defaultdict
 from functools import wraps
@@ -82,6 +81,7 @@ def create_app():
     # -----------------------------------------------------------------------
     from routes_allocations import bp as allocations_bp
     from routes_backup import bp as backup_bp
+    from routes_history import bp as history_bp
     from routes_members import bp as members_bp
     from routes_pages import bp as pages_bp
     from routes_projects import bp as projects_bp
@@ -93,6 +93,7 @@ def create_app():
     app.register_blueprint(members_bp)
     app.register_blueprint(allocations_bp)
     app.register_blueprint(backup_bp)
+    app.register_blueprint(history_bp)
 
     # -----------------------------------------------------------------------
     # Cache-Buster fuer statische Dateien (haengt ?v=<mtime> an url_for)
@@ -109,33 +110,6 @@ def create_app():
                 values["v"] = mtime
             except OSError:
                 pass
-
-    # ── Automatischer Backup-Scheduler (02:00 + 22:00) ──────────────
-    if config.NAS_AUTO:
-        _backup_done_today: set[str] = set()
-
-        def _backup_scheduler():
-            while True:
-                time.sleep(60)
-                now = time.localtime()
-                key = f"{now.tm_yday}_{now.tm_hour:02d}:{now.tm_min:02d}"
-                if now.tm_hour == 0 and now.tm_min < 5:
-                    _backup_done_today.clear()
-                if key in (f"{now.tm_yday}_02:00", f"{now.tm_yday}_22:00"):
-                    if key not in _backup_done_today:
-                        _backup_done_today.add(key)
-                        try:
-                            from backup import _nas_config, _nas_configured, run_backup
-                            if _nas_configured():
-                                with app.app_context():
-                                    result = run_backup(_nas_config())
-                                    app.logger.info("Auto-Backup: %s", result["message"])
-                        except Exception as exc:
-                            app.logger.error("Auto-Backup fehlgeschlagen: %s", exc)
-
-        t = threading.Thread(target=_backup_scheduler, daemon=True)
-        t.start()
-        app.logger.info("Backup-Scheduler gestartet (02:00 + 22:00)")
 
     # Rate-Limit auf API-Routen anwenden (vor der Registrierung als Decorator
     # ist nicht moeglich, also ueber before_request)
