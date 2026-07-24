@@ -484,15 +484,8 @@
         try {
           const res = await fetch("/api/backup/run", { method: "POST" });
           const data = await res.json();
-          let msg = data.message;
-          if (data.ergebnisse) {
-            const details = data.ergebnisse.map(r =>
-              (r.success ? "OK" : "FAIL") + " " + r.label + ": " + r.message
-            ).join(" | ");
-            if (details) msg += " (" + details + ")";
-          }
-          backupStatus.textContent = msg;
-          showToast(msg, data.success ? "success" : "error");
+          backupStatus.textContent = data.message;
+          showToast(data.message, data.success ? "success" : "error");
         } catch (e) {
           backupStatus.textContent = "Fehlgeschlagen";
           showToast("Backup fehlgeschlagen", "error");

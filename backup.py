@@ -271,7 +271,13 @@ def run_all_backups(cfgs: list[BackupConfig]) -> dict:
     if erfolgreich:
         msg_parts.append(f"{erfolgreich}/{len(cfgs)} Ziel(e) OK ({gesamt_dateien} Dateien)")
     if fehlgeschlagen:
-        msg_parts.append(f"{fehlgeschlagen} Ziel(e) fehlgeschlagen")
+        fail_details = " | ".join(
+            f"FAIL {r['label']}: {r['message']}" for r in ergebnisse if not r["success"]
+        )
+        fail_msg = f"{fehlgeschlagen} Ziel(e) fehlgeschlagen"
+        if fail_details:
+            fail_msg += f" ({fail_details})"
+        msg_parts.append(fail_msg)
 
     jetzt = datetime.now()
     zeitstempel = jetzt.isoformat()
