@@ -100,6 +100,16 @@ def update_project(project_id):
     if not fields:
         return jsonify({"error": "Keine Felder zum Aktualisieren"}), 400
 
+    # ── Alten Zustand aller Schritte + Allokationen sichern (für Undo) ──
+    old_steps = db.execute(
+        "SELECT id, project_id, name, start_year, start_q, duration FROM project_steps WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    old_allocs = db.execute(
+        "SELECT project_id, year, quarter, team_member_id, stunden FROM allocations WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+
     try:
         db.execute("BEGIN IMMEDIATE")
 
@@ -169,16 +179,62 @@ def update_project(project_id):
         raise
 
     new_vals = {k: fields.get(k, old[k]) for k in ("name", "start_year", "start_q", "duration")}
-    undo_set = ", ".join(
-        f"{k} = {_escape_sql(old[k])}" for k in ("name", "start_year", "start_q", "duration")
-    )
-    redo_set = ", ".join(
-        f"{k} = {_escape_sql(new_vals[k])}" for k in ("name", "start_year", "start_q", "duration")
-    )
+    undo_sql_parts = [
+        f"UPDATE projects SET name={_escape_sql(old['name'])}, "
+        f"start_year={old['start_year']}, start_q={old['start_q']}, "
+        f"duration={old['duration']} WHERE id = {project_id}"
+    ]
+    redo_sql_parts = [
+        f"UPDATE projects SET name={_escape_sql(new_vals['name'])}, "
+        f"start_year={new_vals['start_year']}, start_q={new_vals['start_q']}, "
+        f"duration={new_vals['duration']} WHERE id = {project_id}"
+    ]
+
+    # Undo: alte Schritte+Allokationen wiederherstellen (DELETE + INSERT)
+    undo_sql_parts.append(f"DELETE FROM project_steps WHERE project_id = {project_id}")
+    for s in old_steps:
+        undo_sql_parts.append(
+            f"INSERT INTO project_steps (id, project_id, name, start_year, start_q, duration) "
+            f"VALUES ({s['id']}, {s['project_id']}, {_escape_sql(s['name'])}, "
+            f"{s['start_year']}, {s['start_q']}, {s['duration']})"
+        )
+    undo_sql_parts.append(f"DELETE FROM allocations WHERE project_id = {project_id}")
+    for a in old_allocs:
+        undo_sql_parts.append(
+            f"INSERT INTO allocations (project_id, year, quarter, team_member_id, stunden) "
+            f"VALUES ({a['project_id']}, {a['year']}, {a['quarter']}, {a['team_member_id']}, {a['stunden']})"
+        )
+
+    # Redo: aktuelle Schritte+Allokationen wiederherstellen
+    new_steps = db.execute(
+        "SELECT id, project_id, name, start_year, start_q, duration FROM project_steps WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    new_allocs = db.execute(
+        "SELECT project_id, year, quarter, team_member_id, stunden FROM allocations WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    redo_sql_parts.append(f"DELETE FROM project_steps WHERE project_id = {project_id}")
+    for s in new_steps:
+        redo_sql_parts.append(
+            f"INSERT INTO project_steps (id, project_id, name, start_year, start_q, duration) "
+            f"VALUES ({s['id']}, {s['project_id']}, {_escape_sql(s['name'])}, "
+            f"{s['start_year']}, {s['start_q']}, {s['duration']})"
+        )
+    redo_sql_parts.append(f"DELETE FROM allocations WHERE project_id = {project_id}")
+    for a in new_allocs:
+        redo_sql_parts.append(
+            f"INSERT INTO allocations (project_id, year, quarter, team_member_id, stunden) "
+            f"VALUES ({a['project_id']}, {a['year']}, {a['quarter']}, {a['team_member_id']}, {a['stunden']})"
+        )
+
+    action_desc = f"Projekt »{old['name']}« bearbeitet"
+    if "start_year" in fields or "start_q" in fields:
+        action_desc = f"Projekt »{old['name']}« verschoben"
     record_action(
-        f"Projekt »{old['name']}« bearbeitet",
-        f"UPDATE projects SET {undo_set} WHERE id = {project_id}",
-        f"UPDATE projects SET {redo_set} WHERE id = {project_id}",
+        action_desc,
+        ";\n".join(undo_sql_parts),
+        ";\n".join(redo_sql_parts),
     )
     return jsonify({"ok": True})
 
