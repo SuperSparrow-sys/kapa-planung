@@ -809,6 +809,12 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.settings-backup-time {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  margin-left: auto;
+}
 
 /* ---------- Toast ---------- */
 .toast-container {

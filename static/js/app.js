@@ -477,6 +477,22 @@
 
     const btnBackup = document.getElementById("btn-backup-now");
     const backupStatus = document.getElementById("backup-status");
+    const backupTime = document.getElementById("backup-time");
+
+    function formatBackupTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return d.toLocaleString("de-DE", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    async function refreshBackupTime() {
+      try {
+        const res = await fetch("/api/backup/status");
+        const data = await res.json();
+        if (backupTime) backupTime.textContent = formatBackupTime(data.last_run);
+      } catch (_) {}
+    }
+
     if (btnBackup && backupStatus) {
       btnBackup.onclick = async () => {
         btnBackup.disabled = true;
@@ -486,6 +502,7 @@
           const data = await res.json();
           backupStatus.textContent = data.message;
           showToast(data.message, data.success ? "success" : "error");
+          refreshBackupTime();
         } catch (e) {
           backupStatus.textContent = "Fehlgeschlagen";
           showToast("Backup fehlgeschlagen", "error");
@@ -494,6 +511,8 @@
         }
       };
     }
+
+    refreshBackupTime();
   }
 
   // -----------------------------------------------------------------------
