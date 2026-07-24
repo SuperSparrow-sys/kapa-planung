@@ -125,15 +125,24 @@ def update_project(project_id):
                 delta = q_ord(new_start_year, new_start_q) - old_start_ord
 
                 if delta != 0:
-                    db.execute(
-                        """
-                        UPDATE allocations
-                        SET year = CAST((year * 4 + (quarter - 1) + ?) / 4 AS INTEGER),
-                            quarter = ((year * 4 + (quarter - 1) + ?) % 4) + 1
-                        WHERE project_id = ?
-                        """,
-                        (delta, delta, project_id),
-                    )
+                    # ── Allokationen verschieben (DELETE + INSERT, vermeidet UNIQUE-Konflikt) ──
+                    allocs = db.execute(
+                        "SELECT project_id, year, quarter, team_member_id, stunden "
+                        "FROM allocations WHERE project_id = ?",
+                        (project_id,),
+                    ).fetchall()
+                    db.execute("DELETE FROM allocations WHERE project_id = ?", (project_id,))
+                    for a in allocs:
+                        new_ord = a["year"] * 4 + (a["quarter"] - 1) + delta
+                        ny, nq = divmod(new_ord, 4)
+                        nq += 1
+                        db.execute(
+                            "INSERT INTO allocations (project_id, year, quarter, team_member_id, stunden) "
+                            "VALUES (?,?,?,?,?)",
+                            (project_id, ny, nq, a["team_member_id"], a["stunden"]),
+                        )
+
+                    # ── Teilschritte verschieben ──
                     db.execute(
                         """
                         UPDATE project_steps
