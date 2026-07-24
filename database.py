@@ -117,7 +117,13 @@ def init_db():
     )
 
     if not _column_exists(db, "team_members", "max_stunden_quarter"):
-        db.execute("ALTER TABLE team_members ADD COLUMN max_stunden_quarter REAL")
+        if _column_exists(db, "team_members", "max_tage_quarter"):
+            db.execute("ALTER TABLE team_members RENAME COLUMN max_tage_quarter TO max_stunden_quarter")
+        else:
+            db.execute("ALTER TABLE team_members ADD COLUMN max_stunden_quarter REAL")
+
+    if _column_exists(db, "allocations", "manntage"):
+        db.execute("ALTER TABLE allocations RENAME COLUMN manntage TO stunden")
 
     db.execute("""
         INSERT OR IGNORE INTO undo_pointer (id, current_position)
