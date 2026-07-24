@@ -104,10 +104,37 @@ def update_project(project_id):
         db.execute("BEGIN IMMEDIATE")
 
         if "start_year" in fields or "start_q" in fields or "duration" in fields:
-            if old:
-                new_start_year = fields.get("start_year", old["start_year"])
-                new_start_q = fields.get("start_q", old["start_q"])
-                new_duration = fields.get("duration", old["duration"])
+            project = db.execute(
+                "SELECT start_year, start_q, duration FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+            if project:
+                old_start_ord = q_ord(project["start_year"], project["start_q"])
+                new_start_year = fields.get("start_year", project["start_year"])
+                new_start_q = fields.get("start_q", project["start_q"])
+                delta = q_ord(new_start_year, new_start_q) - old_start_ord
+
+                if delta != 0:
+                    db.execute(
+                        """
+                        UPDATE allocations
+                        SET year = CAST((year * 4 + (quarter - 1) + ?) / 4 AS INTEGER),
+                            quarter = ((year * 4 + (quarter - 1) + ?) % 4) + 1
+                        WHERE project_id = ?
+                        """,
+                        (delta, delta, project_id),
+                    )
+                    db.execute(
+                        """
+                        UPDATE project_steps
+                        SET start_year = CAST((start_year * 4 + (start_q - 1) + ?) / 4 AS INTEGER),
+                            start_q = ((start_year * 4 + (start_q - 1) + ?) % 4) + 1
+                        WHERE project_id = ?
+                        """,
+                        (delta, delta, project_id),
+                    )
+
+                new_duration = fields.get("duration", project["duration"])
                 new_start_ord = q_ord(new_start_year, new_start_q)
                 new_end_ord = new_start_ord + new_duration - 1
 
